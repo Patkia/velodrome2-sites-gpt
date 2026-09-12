@@ -1,0 +1,10 @@
+{
+  "name": "velodrome2-sites-poc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "check": "node --check app.js && node --check data/mock-positions.js",
+    "test": "node tests/validate-mock-data.mjs"
+  }
+}
