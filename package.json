@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
     "check": "node --check app.js && node --check data/mock-positions.js",
     "test": "node tests/validate-mock-data.mjs"
   }

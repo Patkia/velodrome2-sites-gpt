@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Mock-only Velodrome position monitoring dashboard proof of concept.">
+    <title>Velodrome Position Monitor · POC</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="page-shell">
+        <header class="page-header">
+            <div>
+                <p class="eyebrow">Mock-only dashboard</p>
+                <h1>Velodrome Position Monitor</h1>
+                <p class="subtitle">A read-only proof of concept. No wallet access, alerts, transactions, or external requests.</p>
+            </div>
+            <span class="poc-badge">POC</span>
+        </header>
+
+        <section class="summary-card" aria-labelledby="wallet-summary-title">
+            <div>
+                <p class="section-label" id="wallet-summary-title">Wallet summary</p>
+                <p class="wallet-address" id="wallet-address"></p>
+            </div>
+            <div class="summary-metrics" id="summary-metrics" aria-live="polite"></div>
+        </section>
+
+        <section class="toolbar" aria-label="Dashboard filters">
+            <div>
+                <p class="section-label">Staked positions</p>
+                <p class="updated" id="last-updated"></p>
+            </div>
+            <label class="filter-label" for="chain-filter">
+                Chain
+                <select id="chain-filter">
+                    <option value="all">All chains</option>
+                </select>
+            </label>
+        </section>
+
+        <section class="position-grid" id="position-grid" aria-live="polite"></section>
+        <p class="empty-state" id="empty-state" hidden>No mock positions match this chain.</p>
+    </main>
+
+    <template id="position-card-template">
+        <article class="position-card">
+            <div class="card-heading">
+                <div>
+                    <p class="chain-name"></p>
+                    <h2 class="pair-name"></h2>
+                    <p class="position-id"></p>
+                </div>
+                <span class="status-badge"></span>
+            </div>
+            <dl class="token-list"></dl>
+            <dl class="value-grid">
+                <div><dt>Current value</dt><dd class="current-value"></dd></div>
+                <div><dt>Initial value</dt><dd class="initial-value"></dd></div>
+                <div><dt>Profit / Loss</dt><dd class="profit-loss"></dd></div>
+                <div><dt>Rewards</dt><dd class="rewards"></dd></div>
+            </dl>
+            <p class="card-updated"></p>
+        </article>
+    </template>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
