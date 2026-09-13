@@ -1,13 +1,12 @@
-import { createMonitorResponse } from "@/lib/server/monitor";
+import { handleCronMonitorGet } from "@/lib/server/cron-monitor-route";
 
 export async function GET(request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  return createMonitorResponse({
+  return handleCronMonitorGet(request, {
+    cronSecret: process.env.CRON_SECRET,
     optimismRpcUrl: process.env.OPTIMISM_RPC_URL,
     walletAddress: process.env.WALLET_ADDRESS,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID,
-    testNotification: url.searchParams.get("testNotification") === "1",
   });
 }
 

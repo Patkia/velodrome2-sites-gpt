@@ -135,8 +135,9 @@ assert.equal(errorBody.mode, "stateless-test");
 assert.equal(JSON.stringify(errorBody).includes("secret rpc body"), false);
 
 const routeSource = fs.readFileSync("app/api/cron/monitor/route.ts", "utf8");
+const handlerSource = fs.readFileSync("lib/server/cron-monitor-route.ts", "utf8");
 const source = fs.readFileSync("lib/server/monitor.ts", "utf8");
-assert.match(routeSource, /testNotification/);
+assert.match(handlerSource, /testNotification/);
 assert.match(routeSource, /process\.env\.TELEGRAM_BOT_TOKEN/);
 assert.match(routeSource, /process\.env\.TELEGRAM_CHAT_ID/);
 assert.match(routeSource, /export async function GET/);

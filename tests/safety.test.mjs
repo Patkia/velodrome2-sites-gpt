@@ -18,6 +18,8 @@ const tokenMetadataSource = fs.readFileSync("lib/server/token-metadata.ts", "utf
 const monitorRouteSource = fs.readFileSync("app/api/cron/monitor/route.ts", "utf8");
 const monitorSource = fs.readFileSync("lib/server/monitor.ts", "utf8");
 const telegramSource = fs.readFileSync("lib/server/telegram.ts", "utf8");
+const cronAuthSource = fs.readFileSync("lib/server/cron-auth.ts", "utf8");
+const cronMonitorRouteSource = fs.readFileSync("lib/server/cron-monitor-route.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -109,8 +111,14 @@ assert.match(monitorRouteSource, /export async function OPTIONS/);
 assert.doesNotMatch(monitorRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
 assert.match(monitorSource, /mode: "stateless-test"/);
 assert.match(monitorSource, /persistentDeduplication: false/);
+assert.match(monitorRouteSource, /process\.env\.CRON_SECRET/);
 assert.match(monitorRouteSource, /process\.env\.TELEGRAM_BOT_TOKEN/);
 assert.match(monitorRouteSource, /process\.env\.TELEGRAM_CHAT_ID/);
+assert.match(cronMonitorRouteSource, /authorizeCronRequest/);
+assert.match(cronAuthSource, /crypto\.subtle\.digest/);
+assert.match(cronAuthSource, /UNAUTHORIZED/);
+assert.match(cronAuthSource, /CRON_AUTH_UNAVAILABLE/);
+assert.doesNotMatch(`${cronAuthSource}\n${cronMonitorRouteSource}`, /console\.(log|error|warn|info)/);
 assert.match(telegramSource, /https:\/\/api\.telegram\.org\/bot/);
 assert.match(telegramSource, /sendMessage/);
 assert.doesNotMatch(monitorSource, /upstash|redis|vercel\.app|github/i);
