@@ -9,6 +9,8 @@ const optimismClientSource = fs.readFileSync("lib/server/optimism-rpc.ts", "utf8
 const optimismPositionsRouteSource = fs.readFileSync("app/api/positions/optimism/route.ts", "utf8");
 const optimismPositionsSource = fs.readFileSync("lib/server/optimism-positions.ts", "utf8");
 const optimismDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/optimism-stakes/route.ts", "utf8");
+const multichainDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/multichain-stakes/route.ts", "utf8");
+const multichainDiagnosticsSource = fs.readFileSync("lib/server/multichain-stakes.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -62,8 +64,18 @@ assert.match(optimismDiagnosticsRouteSource, /export async function HEAD/);
 assert.match(optimismDiagnosticsRouteSource, /export async function OPTIONS/);
 assert.doesNotMatch(optimismDiagnosticsRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
 assert.doesNotMatch(pageSource, /\/api\/diagnostics\/optimism-stakes/);
+assert.match(multichainDiagnosticsRouteSource, /process\.env\.WALLET_ADDRESS/);
+assert.match(multichainDiagnosticsRouteSource, /export async function GET/);
+assert.match(multichainDiagnosticsRouteSource, /export async function HEAD/);
+assert.match(multichainDiagnosticsRouteSource, /export async function OPTIONS/);
+assert.doesNotMatch(multichainDiagnosticsRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
+assert.doesNotMatch(pageSource, /\/api\/diagnostics\/multichain-stakes/);
+assert.doesNotMatch(multichainDiagnosticsSource, /AbortController|AbortSignal|setTimeout|cache:|redirect:|signal:/);
+assert.match(multichainDiagnosticsSource, /"eth_chainId"/);
+assert.match(multichainDiagnosticsSource, /"eth_call"/);
+assert.doesNotMatch(multichainDiagnosticsSource, /positions\(|tokenOfOwnerByIndex|balanceOf\(/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",
