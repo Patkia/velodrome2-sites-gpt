@@ -1,30 +1,19 @@
-# Velodrome Position Monitor — Sites POC
+# Velodrome Position Monitor — Sites Worker POC
 
-A static, mock-only dashboard inspired by the read-only monitor view in the separate `velodrome2` project.
+An owner-only ChatGPT Sites proof of concept using the supported Vinext and Cloudflare Workers runtime.
 
-## Safety boundaries
+- The dashboard loads data from the same-origin `GET /api/positions` route.
+- The route returns deterministic fixture data only.
+- There are no blockchain, RPC, DeFiLlama, Blockscout, storage, transaction, notification, or background-job integrations.
 
-- No production source is imported or copied.
-- No API, RPC, Telegram, Upstash, wallet, transaction, cron, authentication, or write operation exists.
-- Mock data lives in `data/mock-positions.js` so a future read-only API adapter can replace it without changing the UI structure.
-
-## Local run
-
-Run the checks (Node.js 18+):
+## Commands
 
 ```powershell
 npm run check
 npm test
+npm run lint
+npm run build
+npm start
 ```
 
-Serve the directory with any static file server, for example:
-
-```powershell
-npx --yes serve .
-```
-
-Then open the local URL printed by the server. This command only serves static local files; the POC itself makes no network requests.
-
-## ChatGPT Sites readiness
-
-This is a stateless static website with no durable storage or secrets, which matches the simplest Sites shape. It has not been deployed.
+The build must emit `dist/server/index.js` and client assets. Runtime values are not required in this fixture-only phase.
