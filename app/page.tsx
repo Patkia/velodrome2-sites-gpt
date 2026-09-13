@@ -22,6 +22,10 @@ function shortAddress(value: string): string {
   return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
 }
 
+function tokenLabel(symbol: string | null, address: string): string {
+  return symbol ?? shortAddress(address);
+}
+
 export default function Home() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [selectedChain, setSelectedChain] = useState("all");
@@ -129,7 +133,7 @@ export default function Home() {
                 <div className="card-heading">
                   <div>
                     <p className="chain-name">{position.chain} · Chain {position.chainId}</p>
-                    <h2 className="pair-name">{shortAddress(position.token0)} / {shortAddress(position.token1)}</h2>
+                    <h2 className="pair-name">{tokenLabel(position.token0Symbol, position.token0)} / {tokenLabel(position.token1Symbol, position.token1)}</h2>
                     <p className="position-id">Position #{position.positionId} · {position.source}</p>
                   </div>
                   <span className={`status-badge ${position.inRange ? "status-in-range" : "status-out-of-range"}`}>
@@ -138,8 +142,8 @@ export default function Home() {
                 </div>
 
                 <dl className="token-list">
-                  <div className="token-row"><dt>Token 0</dt><dd>{shortAddress(position.token0)}</dd></div>
-                  <div className="token-row"><dt>Token 1</dt><dd>{shortAddress(position.token1)}</dd></div>
+                  <div className="token-row"><dt>{position.token0Symbol ?? "Token 0"}</dt><dd>{shortAddress(position.token0)}</dd></div>
+                  <div className="token-row"><dt>{position.token1Symbol ?? "Token 1"}</dt><dd>{shortAddress(position.token1)}</dd></div>
                 </dl>
 
                 <dl className="value-grid">

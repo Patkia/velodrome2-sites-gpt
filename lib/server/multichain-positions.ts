@@ -12,11 +12,16 @@ const SELECTOR = {
 const POSITION_MANAGER = "0x991d5546C4B442B4c5fdc4c8B8b8d131DEB24702";
 const FACTORY = "0x04625B046C69577EfC40e6c0Bb83CDBAfab5a55F";
 
+export const MULTICHAIN_RPC_URLS = {
+  Celo: "https://forno.celo.org",
+  Soneium: "https://rpc.soneium.org",
+} as const;
+
 const CHAINS = [
   {
     chain: "Celo" as const,
     chainId: 42220,
-    rpcUrl: "https://forno.celo.org",
+    rpcUrl: MULTICHAIN_RPC_URLS.Celo,
     gauges: [
       "0xff5ec01b541cab692676ac3150d452b3c7fc404d",
       "0x93c77b19cb0024d1d1c10236ad4552f805a27703",
@@ -30,7 +35,7 @@ const CHAINS = [
   {
     chain: "Soneium" as const,
     chainId: 1868,
-    rpcUrl: "https://rpc.soneium.org",
+    rpcUrl: MULTICHAIN_RPC_URLS.Soneium,
     gauges: [
       "0x10a2bd31da8582231ba355ec7a6d9c2f06932a77",
       "0xf7b979caf782dd3456e4d0f4ec185dd7207b44e9",

@@ -1,9 +1,11 @@
 import { readOptimismPositions } from "./optimism-positions.ts";
-import { readMultichainPositionsDiagnostics } from "./multichain-positions.ts";
+import { MULTICHAIN_RPC_URLS, readMultichainPositionsDiagnostics } from "./multichain-positions.ts";
+import { readTokenMetadata } from "./token-metadata.ts";
 import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
 
 type OptimismReader = typeof readOptimismPositions;
 type MultichainReader = typeof readMultichainPositionsDiagnostics;
+type MetadataReader = typeof readTokenMetadata;
 
 type Options = {
   optimismRpcUrl?: string;
@@ -11,6 +13,7 @@ type Options = {
   fetchImpl?: typeof fetch;
   readOptimism?: OptimismReader;
   readMultichain?: MultichainReader;
+  readMetadata?: MetadataReader;
 };
 
 function normalizePosition(position: {
@@ -28,6 +31,10 @@ function normalizePosition(position: {
 }): DashboardPosition {
   return {
     ...position,
+    token0Symbol: null,
+    token0Decimals: null,
+    token1Symbol: null,
+    token1Decimals: null,
     status: position.inRange ? "in-range" : "out-of-range",
   };
 }
@@ -35,6 +42,7 @@ function normalizePosition(position: {
 export async function readLivePositions(options: Options): Promise<PositionsResponse> {
   const optimismReader = options.readOptimism ?? readOptimismPositions;
   const multichainReader = options.readMultichain ?? readMultichainPositionsDiagnostics;
+  const metadataReader = options.readMetadata ?? readTokenMetadata;
   const unavailableChains: string[] = [];
   const warnings: string[] = [];
   const positions: DashboardPosition[] = [];
@@ -97,6 +105,42 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
     warnings.push("MULTICHAIN_UNAVAILABLE");
   }
 
+  const rpcUrls = new Map<number, string>();
+  if (options.optimismRpcUrl) rpcUrls.set(10, options.optimismRpcUrl);
+  rpcUrls.set(42220, MULTICHAIN_RPC_URLS.Celo);
+  rpcUrls.set(1868, MULTICHAIN_RPC_URLS.Soneium);
+
+  let enrichedPositions = positions;
+  if (positions.length > 0) {
+    try {
+      const metadataResult = await metadataReader({
+        tokens: positions.flatMap((position) => {
+          const rpcUrl = rpcUrls.get(position.chainId);
+          if (!rpcUrl) return [];
+          return [
+            { chain: position.chain, chainId: position.chainId, rpcUrl, address: position.token0 },
+            { chain: position.chain, chainId: position.chainId, rpcUrl, address: position.token1 },
+          ];
+        }),
+        fetchImpl: options.fetchImpl,
+      });
+      warnings.push(...metadataResult.warnings);
+      enrichedPositions = positions.map((position) => {
+        const token0 = metadataResult.metadata.get(`${position.chainId}:${position.token0.toLowerCase()}`);
+        const token1 = metadataResult.metadata.get(`${position.chainId}:${position.token1.toLowerCase()}`);
+        return {
+          ...position,
+          token0Symbol: token0?.symbol ?? null,
+          token0Decimals: token0?.decimals ?? null,
+          token1Symbol: token1?.symbol ?? null,
+          token1Decimals: token1?.decimals ?? null,
+        };
+      });
+    } catch {
+      warnings.push("TOKEN_METADATA_UNAVAILABLE");
+    }
+  }
+
   const uniqueUnavailable = [...new Set(unavailableChains)];
   const uniqueWarnings = [...new Set(warnings)];
 
@@ -105,12 +149,12 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
     status: uniqueUnavailable.length > 0 || uniqueWarnings.length > 0 ? "partial" : "ok",
     generatedAt: new Date().toISOString(),
     walletAddress,
-    positionsChecked: positions.length,
-    positions,
+    positionsChecked: enrichedPositions.length,
+    positions: enrichedPositions,
     chainCounts: {
-      Optimism: positions.filter((position) => position.chain === "Optimism").length,
-      Celo: positions.filter((position) => position.chain === "Celo").length,
-      Soneium: positions.filter((position) => position.chain === "Soneium").length,
+      Optimism: enrichedPositions.filter((position) => position.chain === "Optimism").length,
+      Celo: enrichedPositions.filter((position) => position.chain === "Celo").length,
+      Soneium: enrichedPositions.filter((position) => position.chain === "Soneium").length,
     },
     unavailableChains: uniqueUnavailable,
     warnings: uniqueWarnings,

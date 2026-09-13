@@ -7,7 +7,11 @@ export interface DashboardPosition {
   source: "staked" | "unstaked";
   liquidity: string;
   token0: string;
+  token0Symbol: string | null;
+  token0Decimals: number | null;
   token1: string;
+  token1Symbol: string | null;
+  token1Decimals: number | null;
   tickLower: number;
   tickUpper: number;
   currentTick: number;
@@ -59,7 +63,11 @@ export function isPositionsResponse(value: unknown): value is PositionsResponse 
       && (position.source === "staked" || position.source === "unstaked")
       && typeof position.liquidity === "string"
       && typeof position.token0 === "string"
+      && (typeof position.token0Symbol === "string" || position.token0Symbol === null)
+      && (typeof position.token0Decimals === "number" || position.token0Decimals === null)
       && typeof position.token1 === "string"
+      && (typeof position.token1Symbol === "string" || position.token1Symbol === null)
+      && (typeof position.token1Decimals === "number" || position.token1Decimals === null)
       && typeof position.tickLower === "number"
       && typeof position.tickUpper === "number"
       && typeof position.currentTick === "number"

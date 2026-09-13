@@ -14,6 +14,7 @@ const multichainDiagnosticsSource = fs.readFileSync("lib/server/multichain-stake
 const multichainPositionsRouteSource = fs.readFileSync("app/api/diagnostics/multichain-positions/route.ts", "utf8");
 const multichainPositionsSource = fs.readFileSync("lib/server/multichain-positions.ts", "utf8");
 const livePositionsSource = fs.readFileSync("lib/server/live-positions.ts", "utf8");
+const tokenMetadataSource = fs.readFileSync("lib/server/token-metadata.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -93,8 +94,14 @@ assert.match(multichainPositionsSource, /stakedByIndex/);
 assert.match(multichainPositionsSource, /positions/);
 assert.match(multichainPositionsSource, /getPool/);
 assert.match(multichainPositionsSource, /slot0/);
+assert.doesNotMatch(tokenMetadataSource, /AbortController|AbortSignal|setTimeout|cache:|redirect:|signal:/);
+assert.match(tokenMetadataSource, /method: "eth_call"/);
+assert.match(tokenMetadataSource, /0x95d89b41/);
+assert.match(tokenMetadataSource, /0x313ce567/);
+assert.doesNotMatch(tokenMetadataSource, /eth_chainId|eth_sendRawTransaction|eth_sendTransaction|personal_sign|eth_sign/);
+assert.doesNotMatch(tokenMetadataSource, /DeFiLlama|Blockscout|TELEGRAM_|UPSTASH_|Cron|balanceOf|transfer\(|approve\(/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\n${livePositionsSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\n${livePositionsSource}\n${tokenMetadataSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",

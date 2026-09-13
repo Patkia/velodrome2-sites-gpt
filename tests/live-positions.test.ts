@@ -72,11 +72,22 @@ const multichainTwo = async () => ({
   ],
 });
 
+const tokenMetadata = async () => ({
+  metadata: new Map([
+    ["42220:0x0000000000000000000000000000000000000001", { chainId: 42220, address: "0x0000000000000000000000000000000000000001", symbol: "CELO", decimals: 18 }],
+    ["42220:0x0000000000000000000000000000000000000002", { chainId: 42220, address: "0x0000000000000000000000000000000000000002", symbol: "USDC", decimals: 6 }],
+    ["1868:0x0000000000000000000000000000000000000003", { chainId: 1868, address: "0x0000000000000000000000000000000000000003", symbol: "ASTR", decimals: 18 }],
+    ["1868:0x0000000000000000000000000000000000000004", { chainId: 1868, address: "0x0000000000000000000000000000000000000004", symbol: "WETH", decimals: 18 }],
+  ]),
+  warnings: [],
+});
+
 const combined = await readLivePositions({
   walletAddress: "0x1111111111111111111111111111111111111111",
   optimismRpcUrl: "https://example.invalid",
   readOptimism: optimismEmpty as never,
   readMultichain: multichainTwo as never,
+  readMetadata: tokenMetadata as never,
 });
 assert.equal(combined.positions.length, 2);
 assert.deepEqual(combined.chainCounts, { Optimism: 0, Celo: 1, Soneium: 1 });
@@ -85,12 +96,36 @@ assert.deepEqual(combined.positions.map((position) => [position.chain, position.
   ["Soneium", "staked"],
 ]);
 assert.equal(combined.positions.some((position) => position.chain === "Optimism"), false);
+assert.equal(combined.positions[0]?.token0Symbol, "CELO");
+assert.equal(combined.positions[0]?.token0Decimals, 18);
+assert.equal(combined.positions[0]?.token1Symbol, "USDC");
+assert.equal(combined.positions[0]?.token1Decimals, 6);
+assert.equal(combined.positions[1]?.token0Symbol, "ASTR");
+assert.equal(combined.positions[1]?.token1Symbol, "WETH");
+
+const metadataPartial = await readLivePositions({
+  walletAddress: "0x1111111111111111111111111111111111111111",
+  optimismRpcUrl: "https://example.invalid",
+  readOptimism: optimismEmpty as never,
+  readMultichain: multichainTwo as never,
+  readMetadata: (async () => ({
+    metadata: new Map([
+      ["42220:0x0000000000000000000000000000000000000001", { chainId: 42220, address: "0x0000000000000000000000000000000000000001", symbol: null, decimals: null }],
+    ]),
+    warnings: ["CELO_TOKEN_SYMBOL_PARTIAL", "CELO_TOKEN_DECIMALS_PARTIAL"],
+  })) as never,
+});
+assert.equal(metadataPartial.positions.length, 2);
+assert.equal(metadataPartial.positions[0]?.token0Symbol, null);
+assert.equal(metadataPartial.positions[0]?.token0Decimals, null);
+assert.equal(metadataPartial.status, "partial");
 
 const partial = await readLivePositions({
   walletAddress: "0x1111111111111111111111111111111111111111",
   optimismRpcUrl: "https://example.invalid",
   readOptimism: (async () => { throw new Error("hidden"); }) as never,
   readMultichain: multichainTwo as never,
+  readMetadata: tokenMetadata as never,
 });
 assert.equal(partial.status, "partial");
 assert.deepEqual(partial.unavailableChains, ["Optimism"]);
