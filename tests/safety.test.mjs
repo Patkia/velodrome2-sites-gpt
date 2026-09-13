@@ -15,6 +15,9 @@ const multichainPositionsRouteSource = fs.readFileSync("app/api/diagnostics/mult
 const multichainPositionsSource = fs.readFileSync("lib/server/multichain-positions.ts", "utf8");
 const livePositionsSource = fs.readFileSync("lib/server/live-positions.ts", "utf8");
 const tokenMetadataSource = fs.readFileSync("lib/server/token-metadata.ts", "utf8");
+const monitorRouteSource = fs.readFileSync("app/api/cron/monitor/route.ts", "utf8");
+const monitorSource = fs.readFileSync("lib/server/monitor.ts", "utf8");
+const telegramSource = fs.readFileSync("lib/server/telegram.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -100,6 +103,19 @@ assert.match(tokenMetadataSource, /0x95d89b41/);
 assert.match(tokenMetadataSource, /0x313ce567/);
 assert.doesNotMatch(tokenMetadataSource, /eth_chainId|eth_sendRawTransaction|eth_sendTransaction|personal_sign|eth_sign/);
 assert.doesNotMatch(tokenMetadataSource, /DeFiLlama|Blockscout|TELEGRAM_|UPSTASH_|Cron|balanceOf|transfer\(|approve\(/);
+assert.match(monitorRouteSource, /export async function GET/);
+assert.match(monitorRouteSource, /export async function HEAD/);
+assert.match(monitorRouteSource, /export async function OPTIONS/);
+assert.doesNotMatch(monitorRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
+assert.match(monitorSource, /mode: "stateless-test"/);
+assert.match(monitorSource, /persistentDeduplication: false/);
+assert.match(monitorRouteSource, /process\.env\.TELEGRAM_BOT_TOKEN/);
+assert.match(monitorRouteSource, /process\.env\.TELEGRAM_CHAT_ID/);
+assert.match(telegramSource, /https:\/\/api\.telegram\.org\/bot/);
+assert.match(telegramSource, /sendMessage/);
+assert.doesNotMatch(monitorSource, /upstash|redis|vercel\.app|github/i);
+assert.doesNotMatch(telegramSource, /upstash|redis|vercel\.app|github|CRON_SECRET/i);
+assert.doesNotMatch(`${monitorSource}\n${telegramSource}`, /writeFile|appendFile|file_put_contents|eth_sendTransaction|eth_sendRawTransaction|personal_sign|eth_sign/);
 
 const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\n${livePositionsSource}\n${tokenMetadataSource}`;
 for (const forbidden of [
