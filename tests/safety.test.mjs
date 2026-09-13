@@ -8,6 +8,7 @@ const optimismRouteSource = fs.readFileSync("app/api/health/optimism/route.ts", 
 const optimismClientSource = fs.readFileSync("lib/server/optimism-rpc.ts", "utf8");
 const optimismPositionsRouteSource = fs.readFileSync("app/api/positions/optimism/route.ts", "utf8");
 const optimismPositionsSource = fs.readFileSync("lib/server/optimism-positions.ts", "utf8");
+const optimismDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/optimism-stakes/route.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -54,8 +55,15 @@ assert.doesNotMatch(pageSource, /WALLET_ADDRESS|\/api\/positions\/optimism/);
 assert.doesNotMatch(optimismPositionsSource, /https?:\/\/|AbortController|cache:|redirect:|signal:/);
 assert.match(optimismPositionsSource, /"eth_chainId"/);
 assert.match(optimismPositionsSource, /"eth_call"/);
+assert.match(optimismDiagnosticsRouteSource, /process\.env\.OPTIMISM_RPC_URL/);
+assert.match(optimismDiagnosticsRouteSource, /process\.env\.WALLET_ADDRESS/);
+assert.match(optimismDiagnosticsRouteSource, /export async function GET/);
+assert.match(optimismDiagnosticsRouteSource, /export async function HEAD/);
+assert.match(optimismDiagnosticsRouteSource, /export async function OPTIONS/);
+assert.doesNotMatch(optimismDiagnosticsRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
+assert.doesNotMatch(pageSource, /\/api\/diagnostics\/optimism-stakes/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",

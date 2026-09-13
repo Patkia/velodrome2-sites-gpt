@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { createOptimismPositionsResponse } from "../lib/server/optimism-positions.ts";
+import {
+  createOptimismPositionsResponse,
+  createOptimismStakeDiagnosticsResponse,
+} from "../lib/server/optimism-positions.ts";
 
 const rpcUrl = "https://rpc.example.test/private-value";
 const walletAddress = "0x1234567890abcdef1234567890abcdef1234abcd";
@@ -172,6 +175,100 @@ assert.deepEqual(JSON.parse(sanitizedText), {
   status: "error",
   error: { code: "RPC_UNAVAILABLE" },
 });
+
+const diagnosticMethods: string[] = [];
+const diagnosticResponse = await createOptimismStakeDiagnosticsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { method: string; params: [{ to: string; data: string }] };
+    diagnosticMethods.push(request.method);
+    if (request.method === "eth_chainId") return rpcResult("0xa");
+    const call = request.params[0];
+    const selector = call.data.slice(2, 10);
+    const to = call.to.toLowerCase();
+    if (selector === "ae775c32") {
+      const count = to === "0x65759f7f8bc7c1aac4fa57099e6f7a7a1da9b407" ? 2 : 0;
+      return rpcResult(`0x${word(BigInt(count))}`);
+    }
+    if (selector === "70a08231") {
+      if (to === "0xf7f8ccce99ca2896ec75d3a399d152db96808399") return rpcResult(`0x${word(BigInt(1))}`);
+      if (to === "0x416b433906b1b72fa758e166e239c43d68dc6f29") return rpcResult(`0x${word(BigInt(2))}`);
+    }
+    if (selector === "2f745c59") return rpcResult(`0x${word(BigInt(9001))}`);
+    return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601 } });
+  },
+});
+assert.equal(diagnosticResponse.status, 200);
+const diagnosticPayload = await diagnosticResponse.json() as {
+  walletAddress: string;
+  configuredGaugeCount: number;
+  totalStakedAcrossConfiguredGauges: number;
+  gauges: Array<{ index: number; version: string; stakedCount: number; address: string }>;
+  positionManagers: Array<{ version: string; enumerationSupported: boolean; ownedCount: number | null; address: string }>;
+};
+assert.equal(diagnosticPayload.walletAddress, "0x1234...abcd");
+assert.equal(diagnosticPayload.configuredGaugeCount, 10);
+assert.equal(diagnosticPayload.totalStakedAcrossConfiguredGauges, 2);
+assert.equal(diagnosticPayload.gauges[0].stakedCount, 2);
+assert.equal(diagnosticPayload.gauges[1].stakedCount, 0);
+assert.equal(diagnosticPayload.gauges[0].version, "V1");
+assert.equal(diagnosticPayload.gauges[4].version, "V2");
+assert.equal(diagnosticPayload.gauges[0].address, "0x6575...b407");
+assert.deepEqual(
+  diagnosticPayload.positionManagers.map(({ version, enumerationSupported, ownedCount }) => ({ version, enumerationSupported, ownedCount })),
+  [
+    { version: "V1", enumerationSupported: true, ownedCount: 1 },
+    { version: "V2", enumerationSupported: true, ownedCount: 2 },
+  ],
+);
+assert.deepEqual([...new Set(diagnosticMethods)].sort(), ["eth_call", "eth_chainId"]);
+
+const unsupportedEnumerationResponse = await createOptimismStakeDiagnosticsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { method: string; params: [{ to: string; data: string }] };
+    if (request.method === "eth_chainId") return rpcResult("0xa");
+    const call = request.params[0];
+    const selector = call.data.slice(2, 10);
+    if (selector === "ae775c32") return rpcResult(`0x${word(BigInt(0))}`);
+    if (selector === "70a08231") return rpcResult(`0x${word(BigInt(1))}`);
+    if (selector === "2f745c59") return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32000 } });
+    return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601 } });
+  },
+});
+assert.equal(unsupportedEnumerationResponse.status, 200);
+const unsupportedPayload = await unsupportedEnumerationResponse.json() as {
+  positionManagers: Array<{ enumerationSupported: boolean; ownedCount: number | null }>;
+};
+assert.equal(unsupportedPayload.positionManagers[0].enumerationSupported, false);
+assert.equal(unsupportedPayload.positionManagers[0].ownedCount, 1);
+
+const malformedDiagnosticResponse = await createOptimismStakeDiagnosticsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { method: string };
+    return request.method === "eth_chainId" ? rpcResult("0xa") : rpcResult("0x");
+  },
+});
+assert.equal(malformedDiagnosticResponse.status, 502);
+assert.deepEqual(await malformedDiagnosticResponse.json(), {
+  schemaVersion: 1,
+  status: "error",
+  error: { code: "INVALID_RESPONSE" },
+});
+
+const sanitizedDiagnosticResponse = await createOptimismStakeDiagnosticsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: async () => { throw new Error(`diagnostic leak ${rpcUrl} ${walletAddress}`); },
+});
+const sanitizedDiagnosticText = await sanitizedDiagnosticResponse.text();
+assert.equal(sanitizedDiagnosticText.includes(rpcUrl), false);
+assert.equal(sanitizedDiagnosticText.includes(walletAddress), false);
+assert.equal(sanitizedDiagnosticText.includes("diagnostic leak"), false);
 
 const serverSource = fs.readFileSync("lib/server/optimism-positions.ts", "utf8");
 for (const forbidden of [

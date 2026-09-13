@@ -8,6 +8,8 @@ const SELECTOR = {
   positions: "99fbab88",
   getPool: "28af8d0b",
   slot0: "3850c7bd",
+  balanceOf: "70a08231",
+  tokenOfOwnerByIndex: "2f745c59",
 } as const;
 
 const POSITION_MANAGER_V1 = "0xf7f8ccce99ca2896ec75d3a399d152db96808399";
@@ -69,46 +71,7 @@ class PositionsError extends Error {
 }
 
 export async function readOptimismPositions(options: ReaderOptions) {
-  const rpcUrl = validateRpcUrl(options.rpcUrl);
-  const walletAddress = validateWallet(options.walletAddress);
-  const requestFetch = options.fetchImpl ?? fetch;
-  if (typeof requestFetch !== "function") throw new PositionsError("RPC_UNAVAILABLE");
-
-  const rpc = async (method: "eth_chainId" | "eth_call", params: unknown[]): Promise<string> => {
-    if (!RPC_METHODS.has(method)) throw new PositionsError("RPC_UNAVAILABLE");
-
-    let response: Response;
-    try {
-      response = await requestFetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: JSON_RPC_ID, method, params }),
-      });
-    } catch {
-      throw new PositionsError("RPC_UNAVAILABLE");
-    }
-
-    if (!response.ok) throw new PositionsError("RPC_UNAVAILABLE");
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new PositionsError("INVALID_RESPONSE");
-    }
-
-    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-      throw new PositionsError("INVALID_RESPONSE");
-    }
-    const result = payload as { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: RpcErrorPayload };
-    if (result.jsonrpc !== "2.0" || result.id !== JSON_RPC_ID || result.error || !isHex(result.result)) {
-      throw new PositionsError(method === "eth_call" ? "CONTRACT_READ_FAILED" : "INVALID_RESPONSE");
-    }
-    return result.result;
-  };
-
-  const chainId = Number(decodeUint(await rpc("eth_chainId", [])));
-  if (chainId !== OPTIMISM_CHAIN_ID) throw new PositionsError("WRONG_CHAIN");
+  const { walletAddress, rpc, chainId } = await createRpcContext(options);
 
   const positions: Position[] = [];
   for (const gauge of OPTIMISM_GAUGES) {
@@ -172,6 +135,153 @@ export async function readOptimismPositions(options: ReaderOptions) {
   };
 }
 
+type RpcReader = (method: "eth_chainId" | "eth_call", params: unknown[]) => Promise<string>;
+
+async function createRpcContext(options: ReaderOptions): Promise<{
+  walletAddress: string;
+  chainId: number;
+  rpc: RpcReader;
+}> {
+  const rpcUrl = validateRpcUrl(options.rpcUrl);
+  const walletAddress = validateWallet(options.walletAddress);
+  const requestFetch = options.fetchImpl ?? fetch;
+  if (typeof requestFetch !== "function") throw new PositionsError("RPC_UNAVAILABLE");
+
+  const rpc: RpcReader = async (method, params) => {
+    if (!RPC_METHODS.has(method)) throw new PositionsError("RPC_UNAVAILABLE");
+
+    let response: Response;
+    try {
+      response = await requestFetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: JSON_RPC_ID, method, params }),
+      });
+    } catch {
+      throw new PositionsError("RPC_UNAVAILABLE");
+    }
+
+    if (!response.ok) throw new PositionsError("RPC_UNAVAILABLE");
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new PositionsError("INVALID_RESPONSE");
+    }
+
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      throw new PositionsError("INVALID_RESPONSE");
+    }
+    const result = payload as { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: RpcErrorPayload };
+    if (result.jsonrpc !== "2.0" || result.id !== JSON_RPC_ID || result.error || !isHex(result.result)) {
+      throw new PositionsError(method === "eth_call" ? "CONTRACT_READ_FAILED" : "INVALID_RESPONSE");
+    }
+    return result.result;
+  };
+
+  const chainId = Number(decodeUint(await rpc("eth_chainId", [])));
+  if (chainId !== OPTIMISM_CHAIN_ID) throw new PositionsError("WRONG_CHAIN");
+  return { walletAddress, chainId, rpc };
+}
+
+export async function readOptimismStakeDiagnostics(options: ReaderOptions) {
+  const { walletAddress, rpc, chainId } = await createRpcContext(options);
+  const gauges = [] as Array<{
+    index: number;
+    version: "V1" | "V2";
+    address: string;
+    stakedCount: number;
+  }>;
+  let totalStakedAcrossConfiguredGauges = 0;
+
+  for (let index = 0; index < OPTIMISM_GAUGES.length; index++) {
+    const gauge = OPTIMISM_GAUGES[index];
+    const countHex = await ethCall(rpc, gauge.address, `0x${SELECTOR.stakedLength}${encodeAddress(walletAddress)}`);
+    const stakedCount = toSafeCount(decodeUint(countHex));
+    totalStakedAcrossConfiguredGauges += stakedCount;
+    gauges.push({
+      index,
+      version: gauge.positionManager.toLowerCase() === POSITION_MANAGER_V1.toLowerCase() ? "V1" : "V2",
+      address: maskAddress(gauge.address),
+      stakedCount,
+    });
+  }
+
+  const positionManagers = [] as Array<{
+    version: "V1" | "V2";
+    address: string;
+    enumerationSupported: boolean;
+    ownedCount: number | null;
+  }>;
+
+  for (const manager of [
+    { version: "V1" as const, address: POSITION_MANAGER_V1 },
+    { version: "V2" as const, address: POSITION_MANAGER_V2 },
+  ]) {
+    try {
+      const countHex = await ethCall(rpc, manager.address, `0x${SELECTOR.balanceOf}${encodeAddress(walletAddress)}`);
+      const ownedCount = toSafeCount(decodeUint(countHex));
+      let enumerationSupported = true;
+      if (ownedCount > 0) {
+        try {
+          const tokenHex = await ethCall(
+            rpc,
+            manager.address,
+            `0x${SELECTOR.tokenOfOwnerByIndex}${encodeAddress(walletAddress)}${encodeUint(BigInt(0))}`,
+          );
+          decodeUint(tokenHex);
+        } catch (error) {
+          if (!(error instanceof PositionsError) || error.code !== "CONTRACT_READ_FAILED") throw error;
+          enumerationSupported = false;
+        }
+      }
+      positionManagers.push({
+        version: manager.version,
+        address: maskAddress(manager.address),
+        enumerationSupported,
+        ownedCount,
+      });
+    } catch (error) {
+      if (!(error instanceof PositionsError) || error.code !== "CONTRACT_READ_FAILED") throw error;
+      positionManagers.push({
+        version: manager.version,
+        address: maskAddress(manager.address),
+        enumerationSupported: false,
+        ownedCount: null,
+      });
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    status: "ok" as const,
+    chain: "Optimism" as const,
+    chainId,
+    walletAddress: maskWallet(walletAddress),
+    configuredGaugeCount: OPTIMISM_GAUGES.length,
+    gauges,
+    totalStakedAcrossConfiguredGauges,
+    positionManagers,
+  };
+}
+
+export async function createOptimismStakeDiagnosticsResponse(options: ReaderOptions): Promise<Response> {
+  try {
+    return Response.json(await readOptimismStakeDiagnostics(options), {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    const code = error instanceof PositionsError ? error.code : "INVALID_RESPONSE";
+    const status = code === "CONFIGURATION_UNAVAILABLE" ? 503 : 502;
+    return Response.json({ schemaVersion: 1, status: "error", error: { code } }, {
+      status,
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+}
+
 export async function createOptimismPositionsResponse(options: ReaderOptions): Promise<Response> {
   try {
     return Response.json(await readOptimismPositions(options), { status: 200, headers: { "Cache-Control": "no-store" } });
@@ -214,6 +324,10 @@ function validateWallet(value?: string): string {
 
 function maskWallet(wallet: string): string {
   return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
+}
+
+function maskAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`.toLowerCase();
 }
 
 function isHex(value: unknown): value is string {
