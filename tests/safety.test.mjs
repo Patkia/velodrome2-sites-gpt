@@ -11,6 +11,8 @@ const optimismPositionsSource = fs.readFileSync("lib/server/optimism-positions.t
 const optimismDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/optimism-stakes/route.ts", "utf8");
 const multichainDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/multichain-stakes/route.ts", "utf8");
 const multichainDiagnosticsSource = fs.readFileSync("lib/server/multichain-stakes.ts", "utf8");
+const multichainPositionsRouteSource = fs.readFileSync("app/api/diagnostics/multichain-positions/route.ts", "utf8");
+const multichainPositionsSource = fs.readFileSync("lib/server/multichain-positions.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -74,8 +76,22 @@ assert.doesNotMatch(multichainDiagnosticsSource, /AbortController|AbortSignal|se
 assert.match(multichainDiagnosticsSource, /"eth_chainId"/);
 assert.match(multichainDiagnosticsSource, /"eth_call"/);
 assert.doesNotMatch(multichainDiagnosticsSource, /positions\(|tokenOfOwnerByIndex|balanceOf\(/);
+assert.match(multichainPositionsRouteSource, /process\.env\.WALLET_ADDRESS/);
+assert.match(multichainPositionsRouteSource, /export async function GET/);
+assert.match(multichainPositionsRouteSource, /export async function HEAD/);
+assert.match(multichainPositionsRouteSource, /export async function OPTIONS/);
+assert.doesNotMatch(multichainPositionsRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
+assert.doesNotMatch(pageSource, /\/api\/diagnostics\/multichain-positions/);
+assert.doesNotMatch(multichainPositionsSource, /AbortController|AbortSignal|setTimeout|cache:|redirect:|signal:/);
+assert.match(multichainPositionsSource, /"eth_chainId"/);
+assert.match(multichainPositionsSource, /"eth_call"/);
+assert.match(multichainPositionsSource, /stakedLength/);
+assert.match(multichainPositionsSource, /stakedByIndex/);
+assert.match(multichainPositionsSource, /positions/);
+assert.match(multichainPositionsSource, /getPool/);
+assert.match(multichainPositionsSource, /slot0/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",
