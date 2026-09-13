@@ -4,6 +4,8 @@ import fs from "node:fs";
 const routeSource = fs.readFileSync("app/api/positions/route.ts", "utf8");
 const pageSource = fs.readFileSync("app/page.tsx", "utf8");
 const sharedSource = fs.readFileSync("lib/shared/positions-schema.ts", "utf8");
+const optimismRouteSource = fs.readFileSync("app/api/health/optimism/route.ts", "utf8");
+const optimismClientSource = fs.readFileSync("lib/server/optimism-rpc.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -31,6 +33,25 @@ for (const forbidden of [
 assert.doesNotMatch(serverSource, /https?:\/\//);
 for (const marker of ["schemaVersion: 1", 'status: "ok"', 'chain: "Optimism"', 'chain: "Celo"', 'chain: "Soneium"']) {
   assert.equal(sharedSource.includes(marker), true, `Missing fixture marker: ${marker}`);
+}
+
+assert.match(optimismRouteSource, /process\.env\.OPTIMISM_RPC_URL/);
+assert.match(optimismRouteSource, /export async function GET/);
+assert.match(optimismRouteSource, /export async function HEAD/);
+assert.match(optimismRouteSource, /export async function OPTIONS/);
+assert.doesNotMatch(optimismRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
+assert.doesNotMatch(pageSource, /OPTIMISM_RPC_URL|\/api\/health\/optimism/);
+assert.equal((optimismClientSource.match(/fetchImpl\(/g) ?? []).length, 1);
+assert.match(optimismClientSource, /const RPC_METHOD = "eth_chainId"/);
+assert.doesNotMatch(optimismClientSource, /console\.|https?:\/\//);
+
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}`;
+for (const forbidden of [
+  "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
+  "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",
+  "cloudflare:workers", "D1Database", "R2Bucket", "KVNamespace", "Queue",
+]) {
+  assert.equal(optimismServerSource.includes(forbidden), false, `Forbidden Optimism wiring: ${forbidden}`);
 }
 
 console.log("safety.test: PASS");
