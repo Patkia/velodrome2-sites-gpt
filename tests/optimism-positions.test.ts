@@ -32,8 +32,7 @@ function rpcResult(result: string): Response {
 }
 
 function createMockFetch(positions: FixturePosition[], methods: string[]): typeof fetch {
-  let poolIndex = 0;
-  const pools = positions.map((_, index) => `0x${(index + 10).toString(16).padStart(40, "0")}`);
+  const pool = "0x000000000000000000000000000000000000000a";
 
   return async (_input, init) => {
     const request = JSON.parse(String(init?.body)) as { method: string; params: [{ to: string; data: string }] };
@@ -50,6 +49,7 @@ function createMockFetch(positions: FixturePosition[], methods: string[]): typeo
       const index = Number(BigInt(`0x${call.data.slice(-64)}`));
       return rpcResult(`0x${word(positions[index].id)}`);
     }
+    if (selector === "70a08231") return rpcResult(`0x${word(BigInt(0))}`);
     if (selector === "99fbab88") {
       const id = BigInt(`0x${call.data.slice(-64)}`);
       const position = positions.find((item) => item.id === id);
@@ -65,12 +65,10 @@ function createMockFetch(positions: FixturePosition[], methods: string[]): typeo
         word(position.liquidity),
       ].join("")}`);
     }
-    if (selector === "28af8d0b") {
-      return rpcResult(`0x${addressWord(pools[poolIndex++])}`);
-    }
+    if (selector === "28af8d0b") return rpcResult(`0x${addressWord(pool)}`);
     if (selector === "3850c7bd") {
-      const index = pools.indexOf(call.to.toLowerCase());
-      return rpcResult(`0x${word(BigInt(1))}${word(BigInt(positions[index].currentTick))}`);
+      const currentTick = positions[0]?.currentTick ?? 0;
+      return rpcResult(`0x${word(BigInt(1))}${word(BigInt(currentTick))}`);
     }
     return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601 } });
   };
@@ -91,6 +89,8 @@ assert.deepEqual(await zeroResponse.json(), {
   walletAddress: "0x1234...abcd",
   positionsChecked: 0,
   positions: [],
+  unavailablePositionIds: [],
+  warnings: [],
 });
 assert.deepEqual([...new Set(zeroMethods)].sort(), ["eth_call", "eth_chainId"]);
 
@@ -124,6 +124,171 @@ assert.deepEqual(positionsPayload.positions.map((position) => position.liquidity
 assert.equal(positionsPayload.positions[0].inRange, true);
 assert.equal(positionsPayload.positions[1].inRange, false);
 assert.deepEqual([...new Set(positionMethods)].sort(), ["eth_call", "eth_chainId"]);
+
+type CombinedFixtureOptions = {
+  stakedV1?: FixturePosition[];
+  stakedV2?: FixturePosition[];
+  unstakedV2?: FixturePosition[];
+  failPositionIds?: bigint[];
+};
+
+function createCombinedMockFetch(options: CombinedFixtureOptions, concurrency?: { active: number; max: number }): typeof fetch {
+  const stakedV1 = options.stakedV1 ?? [];
+  const stakedV2 = options.stakedV2 ?? [];
+  const unstakedV2 = options.unstakedV2 ?? [];
+  const failIds = new Set((options.failPositionIds ?? []).map(String));
+  const v1Gauge = "0x65759f7f8bc7c1aac4fa57099e6f7a7a1da9b407";
+  const v2Gauge = "0x7888c54b5ce4909c485f477a9631fadf60d8ac5b";
+  const v1Manager = "0xf7f8ccce99ca2896ec75d3a399d152db96808399";
+  const v2Manager = "0x416b433906b1b72fa758e166e239c43d68dc6f29";
+  const pool = "0x000000000000000000000000000000000000000a";
+  const all = [...stakedV1, ...stakedV2, ...unstakedV2];
+
+  return async (_input, init) => {
+    if (concurrency) {
+      concurrency.active++;
+      concurrency.max = Math.max(concurrency.max, concurrency.active);
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+    }
+    try {
+      const request = JSON.parse(String(init?.body)) as { method: string; params: [{ to: string; data: string }] };
+      if (request.method === "eth_chainId") return rpcResult("0xa");
+      const call = request.params[0];
+      const selector = call.data.slice(2, 10);
+      const to = call.to.toLowerCase();
+
+      if (selector === "ae775c32") {
+        const count = to === v1Gauge ? stakedV1.length : to === v2Gauge ? stakedV2.length : 0;
+        return rpcResult(`0x${word(BigInt(count))}`);
+      }
+      if (selector === "38463937") {
+        const index = Number(BigInt(`0x${call.data.slice(-64)}`));
+        const list = to === v1Gauge ? stakedV1 : stakedV2;
+        return rpcResult(`0x${word(list[index].id)}`);
+      }
+      if (selector === "70a08231") {
+        return rpcResult(`0x${word(BigInt(to === v2Manager ? unstakedV2.length : 0))}`);
+      }
+      if (selector === "2f745c59") {
+        const index = Number(BigInt(`0x${call.data.slice(-64)}`));
+        return rpcResult(`0x${word(unstakedV2[index].id)}`);
+      }
+      if (selector === "99fbab88") {
+        const id = BigInt(`0x${call.data.slice(-64)}`);
+        if (failIds.has(id.toString())) {
+          return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32000 } });
+        }
+        const source = to === v1Manager ? stakedV1 : [...stakedV2, ...unstakedV2];
+        const position = source.find((item) => item.id === id);
+        if (!position) return rpcResult("0x");
+        return rpcResult(`0x${[
+          word(BigInt(0)),
+          addressWord("0x0000000000000000000000000000000000000000"),
+          addressWord(token0),
+          addressWord(token1),
+          word(BigInt(100)),
+          word(BigInt(position.tickLower)),
+          word(BigInt(position.tickUpper)),
+          word(position.liquidity),
+        ].join("")}`);
+      }
+      if (selector === "28af8d0b") return rpcResult(`0x${addressWord(pool)}`);
+      if (selector === "3850c7bd") {
+        const currentTick = all[0]?.currentTick ?? 20;
+        return rpcResult(`0x${word(BigInt(1))}${word(BigInt(currentTick))}`);
+      }
+      return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601 } });
+    } finally {
+      if (concurrency) concurrency.active--;
+    }
+  };
+}
+
+const unstakedOnly = [
+  { id: BigInt(200), liquidity: BigInt(700), tickLower: -50, currentTick: 20, tickUpper: 50 },
+  { id: BigInt(201), liquidity: BigInt(800), tickLower: 30, currentTick: 20, tickUpper: 60 },
+  { id: BigInt(202), liquidity: BigInt(0), tickLower: -10, currentTick: 20, tickUpper: 10 },
+];
+const unstakedOnlyResponse = await createOptimismPositionsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: createCombinedMockFetch({ unstakedV2: unstakedOnly }),
+});
+assert.equal(unstakedOnlyResponse.status, 200);
+const unstakedOnlyPayload = await unstakedOnlyResponse.json() as {
+  positionsChecked: number;
+  positions: Array<{ positionId: string; source: string; version: string; liquidity: string; inRange: boolean }>;
+  unavailablePositionIds: string[];
+  warnings: string[];
+};
+assert.equal(unstakedOnlyPayload.positionsChecked, 2);
+assert.deepEqual(unstakedOnlyPayload.positions.map(({ positionId, source, version }) => ({ positionId, source, version })), [
+  { positionId: "200", source: "unstaked", version: "V2" },
+  { positionId: "201", source: "unstaked", version: "V2" },
+]);
+assert.deepEqual(unstakedOnlyPayload.positions.map((position) => position.liquidity), ["700", "800"]);
+assert.deepEqual(unstakedOnlyPayload.positions.map((position) => position.inRange), [true, false]);
+assert.deepEqual(unstakedOnlyPayload.unavailablePositionIds, []);
+assert.deepEqual(unstakedOnlyPayload.warnings, []);
+
+const mixedResponse = await createOptimismPositionsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: createCombinedMockFetch({
+    stakedV1: [{ id: BigInt(300), liquidity: BigInt(900), tickLower: -100, currentTick: 20, tickUpper: 100 }],
+    stakedV2: [{ id: BigInt(400), liquidity: BigInt(1000), tickLower: -100, currentTick: 20, tickUpper: 100 }],
+    unstakedV2: [
+      { id: BigInt(400), liquidity: BigInt(1000), tickLower: -100, currentTick: 20, tickUpper: 100 },
+      { id: BigInt(401), liquidity: BigInt(1100), tickLower: -100, currentTick: 20, tickUpper: 100 },
+    ],
+  }),
+});
+const mixedPayload = await mixedResponse.json() as {
+  positions: Array<{ positionId: string; source: string; version: string }>;
+};
+assert.deepEqual(mixedPayload.positions.map(({ positionId, source, version }) => ({ positionId, source, version })), [
+  { positionId: "300", source: "staked", version: "V1" },
+  { positionId: "400", source: "staked", version: "V2" },
+  { positionId: "401", source: "unstaked", version: "V2" },
+]);
+
+const partialResponse = await createOptimismPositionsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: createCombinedMockFetch({
+    unstakedV2: [
+      { id: BigInt(500), liquidity: BigInt(1200), tickLower: -100, currentTick: 20, tickUpper: 100 },
+      { id: BigInt(501), liquidity: BigInt(1300), tickLower: -100, currentTick: 20, tickUpper: 100 },
+    ],
+    failPositionIds: [BigInt(501)],
+  }),
+});
+assert.equal(partialResponse.status, 200);
+const partialPayload = await partialResponse.json() as {
+  positions: Array<{ positionId: string }>;
+  unavailablePositionIds: string[];
+  warnings: string[];
+};
+assert.deepEqual(partialPayload.positions.map((position) => position.positionId), ["500"]);
+assert.deepEqual(partialPayload.unavailablePositionIds, ["V2:501"]);
+assert.deepEqual(partialPayload.warnings, ["POSITION_READ_PARTIAL"]);
+
+const concurrencyState = { active: 0, max: 0 };
+const concurrencyPositions = Array.from({ length: 12 }, (_, index) => ({
+  id: BigInt(600 + index),
+  liquidity: BigInt(1400 + index),
+  tickLower: -100,
+  currentTick: 20,
+  tickUpper: 100,
+}));
+const concurrencyResponse = await createOptimismPositionsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: createCombinedMockFetch({ unstakedV2: concurrencyPositions }, concurrencyState),
+});
+assert.equal(concurrencyResponse.status, 200);
+assert.equal(concurrencyState.max <= 6, true);
+assert.equal(concurrencyState.max >= 2, true);
 
 const wrongChainResponse = await createOptimismPositionsResponse({
   rpcUrl,

@@ -31,6 +31,7 @@ const OPTIMISM_GAUGES = [
 ] as const;
 
 const RPC_METHODS = new Set(["eth_chainId", "eth_call"]);
+const MAX_RPC_CONCURRENCY = 6;
 
 export type OptimismPositionsErrorCode =
   | "CONFIGURATION_UNAVAILABLE"
@@ -49,6 +50,8 @@ type RpcErrorPayload = { code?: unknown };
 
 type Position = {
   positionId: string;
+  source: "staked" | "unstaked";
+  version: "V1" | "V2";
   liquidity: string;
   token0: string;
   token1: string;
@@ -70,59 +73,193 @@ class PositionsError extends Error {
   }
 }
 
+type PositionCandidate = {
+  positionId: bigint;
+  source: "staked" | "unstaked";
+  version: "V1" | "V2";
+  positionManager: string;
+  factory: string;
+};
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runWorker()));
+  return results;
+}
+
+function positionVersion(positionManager: string): "V1" | "V2" {
+  return positionManager.toLowerCase() === POSITION_MANAGER_V1.toLowerCase() ? "V1" : "V2";
+}
+
+async function readPositionCandidate(rpc: RpcReader, candidate: PositionCandidate): Promise<Position | null> {
+  const positionHex = await ethCall(
+    rpc,
+    candidate.positionManager,
+    `0x${SELECTOR.positions}${encodeUint(candidate.positionId)}`,
+  );
+  const positionWords = splitWords(positionHex, 8);
+  const token0 = decodeAddress(positionWords[2]);
+  const token1 = decodeAddress(positionWords[3]);
+  const tickSpacing = decodeInt24(positionWords[4]);
+  const tickLower = decodeInt24(positionWords[5]);
+  const tickUpper = decodeInt24(positionWords[6]);
+  const liquidityValue = decodeUintWord(positionWords[7]);
+
+  if (candidate.source === "unstaked" && liquidityValue === BigInt(0)) return null;
+
+  const poolHex = await ethCall(
+    rpc,
+    candidate.factory,
+    `0x${SELECTOR.getPool}${encodeAddress(token0)}${encodeAddress(token1)}${encodeSigned(tickSpacing)}`,
+  );
+  const poolAddress = decodeAddress(splitWords(poolHex, 1)[0]);
+  if (poolAddress === ZERO_ADDRESS) throw new PositionsError("CONTRACT_READ_FAILED");
+
+  const slot0Hex = await ethCall(rpc, poolAddress, `0x${SELECTOR.slot0}`);
+  const slot0Words = splitWords(slot0Hex, 2);
+  const currentTick = decodeInt24(slot0Words[1]);
+
+  return {
+    positionId: candidate.positionId.toString(),
+    source: candidate.source,
+    version: candidate.version,
+    liquidity: liquidityValue.toString(),
+    token0,
+    token1,
+    token0Symbol: null,
+    token1Symbol: null,
+    tickLower,
+    currentTick,
+    tickUpper,
+    inRange: currentTick >= tickLower && currentTick <= tickUpper,
+  };
+}
+
 export async function readOptimismPositions(options: ReaderOptions) {
   const { walletAddress, rpc, chainId } = await createRpcContext(options);
+  const warnings = new Set<string>();
+  const unavailablePositionIds = new Set<string>();
+  const candidates = new Map<string, PositionCandidate>();
 
-  const positions: Position[] = [];
-  for (const gauge of OPTIMISM_GAUGES) {
-    const countHex = await ethCall(rpc, gauge.address, `0x${SELECTOR.stakedLength}${encodeAddress(walletAddress)}`);
-    const count = toSafeCount(decodeUint(countHex));
-
-    for (let index = 0; index < count; index++) {
-      const positionIdHex = await ethCall(
+  const gaugeCounts = await mapWithConcurrency(
+    OPTIMISM_GAUGES,
+    MAX_RPC_CONCURRENCY,
+    async (gauge) => {
+      const countHex = await ethCall(
         rpc,
         gauge.address,
-        `0x${SELECTOR.stakedByIndex}${encodeAddress(walletAddress)}${encodeUint(BigInt(index))}`,
+        `0x${SELECTOR.stakedLength}${encodeAddress(walletAddress)}`,
       );
-      const positionId = decodeUint(positionIdHex);
-      const positionHex = await ethCall(
-        rpc,
-        gauge.positionManager,
-        `0x${SELECTOR.positions}${encodeUint(positionId)}`,
-      );
-      const positionWords = splitWords(positionHex, 8);
-      const token0 = decodeAddress(positionWords[2]);
-      const token1 = decodeAddress(positionWords[3]);
-      const tickSpacing = decodeInt24(positionWords[4]);
-      const tickLower = decodeInt24(positionWords[5]);
-      const tickUpper = decodeInt24(positionWords[6]);
-      const liquidity = decodeUintWord(positionWords[7]).toString();
-      const poolHex = await ethCall(
-        rpc,
-        gauge.factory,
-        `0x${SELECTOR.getPool}${encodeAddress(token0)}${encodeAddress(token1)}${encodeSigned(tickSpacing)}`,
-      );
-      const poolAddress = decodeAddress(splitWords(poolHex, 1)[0]);
-      if (poolAddress === ZERO_ADDRESS) throw new PositionsError("CONTRACT_READ_FAILED");
+      return toSafeCount(decodeUint(countHex));
+    },
+  );
 
-      const slot0Hex = await ethCall(rpc, poolAddress, `0x${SELECTOR.slot0}`);
-      const slot0Words = splitWords(slot0Hex, 2);
-      const currentTick = decodeInt24(slot0Words[1]);
+  const stakedLookups = OPTIMISM_GAUGES.flatMap((gauge, gaugeIndex) =>
+    Array.from({ length: gaugeCounts[gaugeIndex] }, (_, index) => ({ gauge, index })),
+  );
 
-      positions.push({
-        positionId: positionId.toString(),
-        liquidity,
-        token0,
-        token1,
-        token0Symbol: null,
-        token1Symbol: null,
-        tickLower,
-        currentTick,
-        tickUpper,
-        inRange: currentTick >= tickLower && currentTick <= tickUpper,
-      });
-    }
+  const stakedCandidates = await mapWithConcurrency(
+    stakedLookups,
+    MAX_RPC_CONCURRENCY,
+    async ({ gauge, index }): Promise<PositionCandidate | null> => {
+      try {
+        const positionIdHex = await ethCall(
+          rpc,
+          gauge.address,
+          `0x${SELECTOR.stakedByIndex}${encodeAddress(walletAddress)}${encodeUint(BigInt(index))}`,
+        );
+        const positionId = decodeUint(positionIdHex);
+        return {
+          positionId,
+          source: "staked",
+          version: positionVersion(gauge.positionManager),
+          positionManager: gauge.positionManager,
+          factory: gauge.factory,
+        };
+      } catch {
+        warnings.add("STAKED_ENUMERATION_PARTIAL");
+        return null;
+      }
+    },
+  );
+
+  for (const candidate of stakedCandidates) {
+    if (candidate === null) continue;
+    candidates.set(`${candidate.positionManager.toLowerCase()}:${candidate.positionId.toString()}`, candidate);
   }
+
+  let v2OwnedCount = 0;
+  try {
+    const countHex = await ethCall(
+      rpc,
+      POSITION_MANAGER_V2,
+      `0x${SELECTOR.balanceOf}${encodeAddress(walletAddress)}`,
+    );
+    v2OwnedCount = toSafeCount(decodeUint(countHex));
+  } catch {
+    warnings.add("UNSTAKED_ENUMERATION_UNAVAILABLE");
+  }
+
+  const unstakedCandidates = await mapWithConcurrency(
+    Array.from({ length: v2OwnedCount }, (_, index) => index),
+    MAX_RPC_CONCURRENCY,
+    async (index): Promise<PositionCandidate | null> => {
+      try {
+        const tokenIdHex = await ethCall(
+          rpc,
+          POSITION_MANAGER_V2,
+          `0x${SELECTOR.tokenOfOwnerByIndex}${encodeAddress(walletAddress)}${encodeUint(BigInt(index))}`,
+        );
+        return {
+          positionId: decodeUint(tokenIdHex),
+          source: "unstaked",
+          version: "V2",
+          positionManager: POSITION_MANAGER_V2,
+          factory: FACTORY_V2,
+        };
+      } catch {
+        warnings.add("UNSTAKED_ENUMERATION_PARTIAL");
+        return null;
+      }
+    },
+  );
+
+  for (const candidate of unstakedCandidates) {
+    if (candidate === null) continue;
+    const key = `${candidate.positionManager.toLowerCase()}:${candidate.positionId.toString()}`;
+    if (!candidates.has(key)) candidates.set(key, candidate);
+  }
+
+  const candidateList = [...candidates.values()];
+  const hydrated = await mapWithConcurrency(
+    candidateList,
+    MAX_RPC_CONCURRENCY,
+    async (candidate): Promise<Position | null> => {
+      try {
+        return await readPositionCandidate(rpc, candidate);
+      } catch {
+        unavailablePositionIds.add(`${candidate.version}:${candidate.positionId.toString()}`);
+        warnings.add("POSITION_READ_PARTIAL");
+        return null;
+      }
+    },
+  );
+  const positions = hydrated.filter((position): position is Position => position !== null);
 
   return {
     schemaVersion: 1,
@@ -132,6 +269,8 @@ export async function readOptimismPositions(options: ReaderOptions) {
     walletAddress: maskWallet(walletAddress),
     positionsChecked: positions.length,
     positions,
+    unavailablePositionIds: [...unavailablePositionIds],
+    warnings: [...warnings],
   };
 }
 
