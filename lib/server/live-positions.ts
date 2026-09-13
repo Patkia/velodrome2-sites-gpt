@@ -1,0 +1,133 @@
+import { readOptimismPositions } from "./optimism-positions.ts";
+import { readMultichainPositionsDiagnostics } from "./multichain-positions.ts";
+import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
+
+type OptimismReader = typeof readOptimismPositions;
+type MultichainReader = typeof readMultichainPositionsDiagnostics;
+
+type Options = {
+  optimismRpcUrl?: string;
+  walletAddress?: string;
+  fetchImpl?: typeof fetch;
+  readOptimism?: OptimismReader;
+  readMultichain?: MultichainReader;
+};
+
+function normalizePosition(position: {
+  chain: string;
+  chainId: number;
+  positionId: string;
+  source: "staked" | "unstaked";
+  liquidity: string;
+  token0: string;
+  token1: string;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number;
+  inRange: boolean;
+}): DashboardPosition {
+  return {
+    ...position,
+    status: position.inRange ? "in-range" : "out-of-range",
+  };
+}
+
+export async function readLivePositions(options: Options): Promise<PositionsResponse> {
+  const optimismReader = options.readOptimism ?? readOptimismPositions;
+  const multichainReader = options.readMultichain ?? readMultichainPositionsDiagnostics;
+  const unavailableChains: string[] = [];
+  const warnings: string[] = [];
+  const positions: DashboardPosition[] = [];
+  let walletAddress = "unavailable";
+
+  const [optimismResult, multichainResult] = await Promise.allSettled([
+    optimismReader({
+      rpcUrl: options.optimismRpcUrl,
+      walletAddress: options.walletAddress,
+      fetchImpl: options.fetchImpl,
+    }),
+    multichainReader({
+      walletAddress: options.walletAddress,
+      fetchImpl: options.fetchImpl,
+    }),
+  ]);
+
+  if (optimismResult.status === "fulfilled") {
+    walletAddress = optimismResult.value.walletAddress;
+    warnings.push(...optimismResult.value.warnings.map((warning) => `OPTIMISM_${warning}`));
+    positions.push(...optimismResult.value.positions.map((position) => normalizePosition({
+      chain: "Optimism",
+      chainId: optimismResult.value.chainId,
+      positionId: position.positionId,
+      source: position.source,
+      liquidity: position.liquidity,
+      token0: position.token0,
+      token1: position.token1,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      currentTick: position.currentTick,
+      inRange: position.inRange,
+    })));
+  } else {
+    unavailableChains.push("Optimism");
+    warnings.push("OPTIMISM_UNAVAILABLE");
+  }
+
+  if (multichainResult.status === "fulfilled") {
+    if (walletAddress === "unavailable") walletAddress = multichainResult.value.walletAddress;
+    for (const chain of multichainResult.value.chains) {
+      if (chain.status === "unavailable") unavailableChains.push(chain.chain);
+      warnings.push(...chain.warnings.map((warning) => `${chain.chain.toUpperCase()}_${warning}`));
+      positions.push(...chain.positions.map((position) => normalizePosition({
+        chain: position.chain,
+        chainId: position.chainId,
+        positionId: position.positionId,
+        source: "staked",
+        liquidity: position.liquidity,
+        token0: position.token0,
+        token1: position.token1,
+        tickLower: position.tickLower,
+        tickUpper: position.tickUpper,
+        currentTick: position.currentTick,
+        inRange: position.inRange,
+      })));
+    }
+  } else {
+    unavailableChains.push("Celo", "Soneium");
+    warnings.push("MULTICHAIN_UNAVAILABLE");
+  }
+
+  const uniqueUnavailable = [...new Set(unavailableChains)];
+  const uniqueWarnings = [...new Set(warnings)];
+
+  return {
+    schemaVersion: 1,
+    status: uniqueUnavailable.length > 0 || uniqueWarnings.length > 0 ? "partial" : "ok",
+    generatedAt: new Date().toISOString(),
+    walletAddress,
+    positionsChecked: positions.length,
+    positions,
+    chainCounts: {
+      Optimism: positions.filter((position) => position.chain === "Optimism").length,
+      Celo: positions.filter((position) => position.chain === "Celo").length,
+      Soneium: positions.filter((position) => position.chain === "Soneium").length,
+    },
+    unavailableChains: uniqueUnavailable,
+    warnings: uniqueWarnings,
+  };
+}
+
+export async function createLivePositionsResponse(options: Options): Promise<Response> {
+  try {
+    const payload = await readLivePositions(options);
+    return Response.json(payload, {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch {
+    return Response.json(
+      { schemaVersion: 1, status: "error", error: { code: "POSITIONS_UNAVAILABLE" } },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+}

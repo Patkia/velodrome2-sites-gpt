@@ -14,15 +14,12 @@ type LoadState =
 
 function formatObservedAt(value: string): string {
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Updated time unavailable";
+  return `Updated · ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date)}`;
+}
 
-  if (Number.isNaN(date.getTime())) {
-    return "Snapshot time unavailable";
-  }
-
-  return `Fixture snapshot · ${new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date)}`;
+function shortAddress(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
 }
 
 export default function Home() {
@@ -39,27 +36,16 @@ export default function Home() {
           cache: "no-store",
           signal: controller.signal,
         });
-
-        if (!response.ok) {
-          throw new Error("Request failed");
-        }
-
+        if (!response.ok) throw new Error("Request failed");
         const payload: unknown = await response.json();
-
-        if (!isPositionsResponse(payload)) {
-          throw new Error("Invalid response");
-        }
-
+        if (!isPositionsResponse(payload)) throw new Error("Invalid response");
         setLoadState({ status: "ready", data: payload });
       } catch {
-        if (!controller.signal.aborted) {
-          setLoadState({ status: "error" });
-        }
+        if (!controller.signal.aborted) setLoadState({ status: "error" });
       }
     }
 
     void loadPositions();
-
     return () => controller.abort();
   }, []);
 
@@ -72,25 +58,22 @@ export default function Home() {
     () => filterPositions(data?.positions ?? [], selectedChain),
     [data, selectedChain],
   );
-  const inRangeCount = data?.positions.filter((position) => position.status === "in-range").length ?? 0;
+  const inRangeCount = data?.positions.filter((position) => position.inRange).length ?? 0;
 
   return (
     <main className="page-shell">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Server-backed fixture</p>
+          <p className="eyebrow">Live blockchain data</p>
           <h1>Velodrome Position Monitor</h1>
-          <p className="subtitle">
-            A read-only Worker proof of concept. No wallet access, alerts, transactions, storage, or external requests.
-          </p>
+          <p className="subtitle">Read-only active liquidity positions across Optimism, Celo, and Soneium.</p>
         </div>
         <span className="poc-badge">POC</span>
       </header>
 
       {loadState.status === "loading" && (
         <section className="notice-card" aria-live="polite">
-          <span className="loading-dot" aria-hidden="true" />
-          Loading position data…
+          <span className="loading-dot" aria-hidden="true" /> Loading position data…
         </section>
       )}
 
@@ -102,6 +85,12 @@ export default function Home() {
 
       {data && (
         <>
+          {data.status === "partial" && (
+            <section className="notice-card error-card" role="status">
+              Some chains could not be read. Showing available live positions only.
+            </section>
+          )}
+
           <section className="summary-card" aria-labelledby="wallet-summary-title">
             <div>
               <p className="section-label" id="wallet-summary-title">Wallet summary</p>
@@ -114,8 +103,7 @@ export default function Home() {
                 ["Out of range", data.positions.length - inRangeCount],
               ].map(([label, value]) => (
                 <div className="metric" key={label}>
-                  <span>{label}</span>
-                  <strong>{value}</strong>
+                  <span>{label}</span><strong>{value}</strong>
                 </div>
               ))}
             </div>
@@ -123,16 +111,12 @@ export default function Home() {
 
           <section className="toolbar" aria-label="Dashboard filters">
             <div>
-              <p className="section-label">Staked positions</p>
+              <p className="section-label">Active positions</p>
               <p className="updated">{formatObservedAt(data.generatedAt)}</p>
             </div>
             <label className="filter-label" htmlFor="chain-filter">
               Chain
-              <select
-                id="chain-filter"
-                value={selectedChain}
-                onChange={(event) => setSelectedChain(event.target.value)}
-              >
+              <select id="chain-filter" value={selectedChain} onChange={(event) => setSelectedChain(event.target.value)}>
                 <option value="all">All chains</option>
                 {chains.map((chain) => <option key={chain} value={chain}>{chain}</option>)}
               </select>
@@ -144,38 +128,31 @@ export default function Home() {
               <article className="position-card" data-status={position.status} key={`${position.chain}-${position.positionId}`}>
                 <div className="card-heading">
                   <div>
-                    <p className="chain-name">{position.chain}</p>
-                    <h2 className="pair-name">{position.pair}</h2>
-                    <p className="position-id">Position #{position.positionId}</p>
+                    <p className="chain-name">{position.chain} · Chain {position.chainId}</p>
+                    <h2 className="pair-name">{shortAddress(position.token0)} / {shortAddress(position.token1)}</h2>
+                    <p className="position-id">Position #{position.positionId} · {position.source}</p>
                   </div>
-                  <span className={`status-badge ${position.status === "in-range" ? "status-in-range" : "status-out-of-range"}`}>
-                    ● {position.status === "in-range" ? "In Range" : "Out of Range"}
+                  <span className={`status-badge ${position.inRange ? "status-in-range" : "status-out-of-range"}`}>
+                    ● {position.inRange ? "In Range" : "Out of Range"}
                   </span>
                 </div>
 
                 <dl className="token-list">
-                  {position.tokens.map((token) => (
-                    <div className="token-row" key={token.symbol}>
-                      <dt>{token.amount} {token.symbol}</dt>
-                      <dd>{token.value}</dd>
-                    </div>
-                  ))}
+                  <div className="token-row"><dt>Token 0</dt><dd>{shortAddress(position.token0)}</dd></div>
+                  <div className="token-row"><dt>Token 1</dt><dd>{shortAddress(position.token1)}</dd></div>
                 </dl>
 
                 <dl className="value-grid">
-                  <div><dt>Current value</dt><dd>{position.currentValue}</dd></div>
-                  <div><dt>Initial value</dt><dd>{position.initialValue}</dd></div>
-                  <div><dt>Profit / Loss</dt><dd className={position.profitLoss.startsWith("+") ? "positive" : "negative"}>{position.profitLoss}</dd></div>
-                  <div><dt>Rewards</dt><dd>{position.rewards}</dd></div>
+                  <div><dt>Liquidity</dt><dd>{position.liquidity}</dd></div>
+                  <div><dt>Current tick</dt><dd>{position.currentTick}</dd></div>
+                  <div><dt>Tick range</dt><dd>{position.tickLower} → {position.tickUpper}</dd></div>
+                  <div><dt>Value / P&amp;L</dt><dd>—</dd></div>
                 </dl>
-                <p className="card-updated">Observed · {formatObservedAt(position.observedAt).replace("Fixture snapshot · ", "")}</p>
               </article>
             ))}
           </section>
 
-          {positions.length === 0 && (
-            <p className="empty-state">No fixture positions match this chain.</p>
-          )}
+          {positions.length === 0 && <p className="empty-state">No active positions found.</p>}
         </>
       )}
     </main>

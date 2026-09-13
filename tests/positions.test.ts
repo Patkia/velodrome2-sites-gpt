@@ -1,16 +1,48 @@
 import assert from "node:assert/strict";
-import { filterPositions, isPositionsResponse, POSITIONS_FIXTURE } from "../lib/shared/positions-schema.ts";
+import fs from "node:fs";
+import { filterPositions, isPositionsResponse, type PositionsResponse } from "../lib/shared/positions-schema.ts";
 
-assert.equal(POSITIONS_FIXTURE.schemaVersion, 1);
-assert.equal(POSITIONS_FIXTURE.status, "ok");
-assert.equal(POSITIONS_FIXTURE.positionsChecked, 3);
-assert.deepEqual(POSITIONS_FIXTURE.positions.map((position) => position.chain), ["Optimism", "Celo", "Soneium"]);
-assert.equal(POSITIONS_FIXTURE.positions.filter((position) => position.inRange).length, 2);
-assert.equal(POSITIONS_FIXTURE.positions.filter((position) => !position.inRange).length, 1);
-assert.equal(filterPositions(POSITIONS_FIXTURE.positions, "Celo")[0]?.positionId, 66480);
-assert.equal(filterPositions(POSITIONS_FIXTURE.positions, "all").length, 3);
-assert.equal(filterPositions(POSITIONS_FIXTURE.positions, "Unknown").length, 0);
-assert.equal(isPositionsResponse(POSITIONS_FIXTURE), true);
+const payload: PositionsResponse = {
+  schemaVersion: 1,
+  status: "ok",
+  generatedAt: "2026-09-13T10:00:00Z",
+  walletAddress: "0x1234...abcd",
+  positionsChecked: 2,
+  positions: [
+    {
+      chain: "Celo", chainId: 42220, positionId: "66480", source: "staked", liquidity: "1000",
+      token0: "0x0000000000000000000000000000000000000001", token1: "0x0000000000000000000000000000000000000002",
+      tickLower: -100, tickUpper: 100, currentTick: 0, inRange: true, status: "in-range",
+    },
+    {
+      chain: "Soneium", chainId: 1868, positionId: "73211", source: "staked", liquidity: "2000",
+      token0: "0x0000000000000000000000000000000000000003", token1: "0x0000000000000000000000000000000000000004",
+      tickLower: -200, tickUpper: -100, currentTick: 0, inRange: false, status: "out-of-range",
+    },
+  ],
+  chainCounts: { Optimism: 0, Celo: 1, Soneium: 1 },
+  unavailableChains: [],
+  warnings: [],
+};
+
+assert.equal(isPositionsResponse(payload), true);
+assert.equal(filterPositions(payload.positions, "Celo")[0]?.positionId, "66480");
+assert.equal(filterPositions(payload.positions, "all").length, 2);
+assert.equal(filterPositions(payload.positions, "Unknown").length, 0);
 assert.equal(isPositionsResponse({ schemaVersion: 1, positions: [] }), false);
+
+const routeSource = fs.readFileSync("app/api/positions/route.ts", "utf8");
+const pageSource = fs.readFileSync("app/page.tsx", "utf8");
+const schemaSource = fs.readFileSync("lib/shared/positions-schema.ts", "utf8");
+assert.doesNotMatch(routeSource, /POSITIONS_FIXTURE/);
+assert.doesNotMatch(schemaSource, /POSITIONS_FIXTURE|9551|8694|3926|VELO ·|Fixture snapshot/);
+assert.match(pageSource, /fetch\("\/api\/positions"/);
+assert.match(pageSource, /position\.liquidity/);
+assert.match(pageSource, /position\.currentTick/);
+assert.match(pageSource, /position\.tickLower/);
+assert.match(pageSource, /position\.tickUpper/);
+assert.match(pageSource, /Value \/ P&amp;L/);
+assert.match(pageSource, /<dd>—<\/dd>/);
+assert.doesNotMatch(pageSource, /\$9,551|\$8,694|\+\$611|126\.55 VELO|Fixture snapshot/);
 
 console.log("positions.test: PASS");

@@ -13,6 +13,7 @@ const multichainDiagnosticsRouteSource = fs.readFileSync("app/api/diagnostics/mu
 const multichainDiagnosticsSource = fs.readFileSync("lib/server/multichain-stakes.ts", "utf8");
 const multichainPositionsRouteSource = fs.readFileSync("app/api/diagnostics/multichain-positions/route.ts", "utf8");
 const multichainPositionsSource = fs.readFileSync("lib/server/multichain-positions.ts", "utf8");
+const livePositionsSource = fs.readFileSync("lib/server/live-positions.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -21,26 +22,28 @@ assert.equal("d1" in hosting, false);
 assert.equal("r2" in hosting, false);
 assert.match(routeSource, /export async function GET/);
 assert.doesNotMatch(routeSource, /export async function (POST|PUT|PATCH|DELETE)/);
-assert.match(routeSource, /POSITIONS_FIXTURE/);
-assert.doesNotMatch(routeSource, /fetch\s*\(/);
+assert.doesNotMatch(routeSource, /POSITIONS_FIXTURE/);
+assert.match(routeSource, /createLivePositionsResponse/);
+assert.match(routeSource, /process\.env\.OPTIMISM_RPC_URL/);
+assert.match(routeSource, /process\.env\.WALLET_ADDRESS/);
 assert.match(pageSource, /fetch\("\/api\/positions"/);
 assert.doesNotMatch(pageSource, /https?:\/\//);
 assert.match(pageSource, /status: "loading"/);
 assert.match(pageSource, /status: "error"/);
 assert.match(pageSource, /filterPositions/);
 
-const serverSource = `${routeSource}\n${sharedSource}`;
+const serverSource = `${routeSource}\n${sharedSource}\n${livePositionsSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "TransactionService", "WalletService", "PRIVATE_KEY",
-  "TELEGRAM_", "UPSTASH_", "Cron", "cloudflare:workers", "process.env", "file_put_contents",
+  "TELEGRAM_", "UPSTASH_", "Cron", "cloudflare:workers", "file_put_contents",
 ]) {
   assert.equal(serverSource.includes(forbidden), false, `Forbidden server wiring: ${forbidden}`);
 }
 
-assert.doesNotMatch(serverSource, /https?:\/\//);
-for (const marker of ["schemaVersion: 1", 'status: "ok"', 'chain: "Optimism"', 'chain: "Celo"', 'chain: "Soneium"']) {
-  assert.equal(sharedSource.includes(marker), true, `Missing fixture marker: ${marker}`);
-}
+assert.doesNotMatch(sharedSource, /POSITIONS_FIXTURE|Fixture snapshot|\$9,551|\+\$611/);
+assert.match(sharedSource, /chainId/);
+assert.match(sharedSource, /liquidity/);
+assert.match(sharedSource, /currentTick/);
 
 assert.match(optimismRouteSource, /process\.env\.OPTIMISM_RPC_URL/);
 assert.match(optimismRouteSource, /export async function GET/);
@@ -91,7 +94,7 @@ assert.match(multichainPositionsSource, /positions/);
 assert.match(multichainPositionsSource, /getPool/);
 assert.match(multichainPositionsSource, /slot0/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\n${livePositionsSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",
