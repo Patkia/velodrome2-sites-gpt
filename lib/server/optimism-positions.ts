@@ -81,6 +81,11 @@ type PositionCandidate = {
   factory: string;
 };
 
+type PositionReadDiagnostics = {
+  unstakedPositionsHydrated: number;
+  liquidityZeroExcluded: number;
+};
+
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
@@ -106,7 +111,11 @@ function positionVersion(positionManager: string): "V1" | "V2" {
   return positionManager.toLowerCase() === POSITION_MANAGER_V1.toLowerCase() ? "V1" : "V2";
 }
 
-async function readPositionCandidate(rpc: RpcReader, candidate: PositionCandidate): Promise<Position | null> {
+async function readPositionCandidate(
+  rpc: RpcReader,
+  candidate: PositionCandidate,
+  diagnostics?: PositionReadDiagnostics,
+): Promise<Position | null> {
   const positionHex = await ethCall(
     rpc,
     candidate.positionManager,
@@ -120,7 +129,11 @@ async function readPositionCandidate(rpc: RpcReader, candidate: PositionCandidat
   const tickUpper = decodeInt24(positionWords[6]);
   const liquidityValue = decodeUintWord(positionWords[7]);
 
-  if (candidate.source === "unstaked" && liquidityValue === BigInt(0)) return null;
+  if (candidate.source === "unstaked" && diagnostics) diagnostics.unstakedPositionsHydrated++;
+  if (candidate.source === "unstaked" && liquidityValue === BigInt(0)) {
+    if (diagnostics) diagnostics.liquidityZeroExcluded++;
+    return null;
+  }
 
   const poolHex = await ethCall(
     rpc,
@@ -155,6 +168,10 @@ export async function readOptimismPositions(options: ReaderOptions) {
   const warnings = new Set<string>();
   const unavailablePositionIds = new Set<string>();
   const candidates = new Map<string, PositionCandidate>();
+  const diagnostics: PositionReadDiagnostics = {
+    unstakedPositionsHydrated: 0,
+    liquidityZeroExcluded: 0,
+  };
 
   const gaugeCounts = await mapWithConcurrency(
     OPTIMISM_GAUGES,
@@ -239,8 +256,10 @@ export async function readOptimismPositions(options: ReaderOptions) {
     },
   );
 
+  let unstakedTokenIdsEnumerated = 0;
   for (const candidate of unstakedCandidates) {
     if (candidate === null) continue;
+    unstakedTokenIdsEnumerated++;
     const key = `${candidate.positionManager.toLowerCase()}:${candidate.positionId.toString()}`;
     if (!candidates.has(key)) candidates.set(key, candidate);
   }
@@ -251,7 +270,7 @@ export async function readOptimismPositions(options: ReaderOptions) {
     MAX_RPC_CONCURRENCY,
     async (candidate): Promise<Position | null> => {
       try {
-        return await readPositionCandidate(rpc, candidate);
+        return await readPositionCandidate(rpc, candidate, diagnostics);
       } catch {
         unavailablePositionIds.add(`${candidate.version}:${candidate.positionId.toString()}`);
         warnings.add("POSITION_READ_PARTIAL");
@@ -260,6 +279,10 @@ export async function readOptimismPositions(options: ReaderOptions) {
     },
   );
   const positions = hydrated.filter((position): position is Position => position !== null);
+  const activeUnstakedPositions = positions.filter((position) => position.source === "unstaked").length;
+  const failedUnstakedPositions = candidateList.filter((candidate) =>
+    candidate.source === "unstaked" && unavailablePositionIds.has(`${candidate.version}:${candidate.positionId.toString()}`),
+  ).length;
 
   return {
     schemaVersion: 1,
@@ -271,6 +294,18 @@ export async function readOptimismPositions(options: ReaderOptions) {
     positions,
     unavailablePositionIds: [...unavailablePositionIds],
     warnings: [...warnings],
+    diagnostics: {
+      v2OwnedCount,
+      unstakedTokenIdsEnumerated,
+      unstakedPositionsHydrated: diagnostics.unstakedPositionsHydrated,
+      liquidityZeroExcluded: diagnostics.liquidityZeroExcluded,
+      activeUnstakedPositions,
+      failedUnstakedPositions,
+      sampleUnstakedTokenIds: unstakedCandidates
+        .filter((candidate): candidate is PositionCandidate => candidate !== null)
+        .slice(0, 3)
+        .map((candidate) => candidate.positionId.toString()),
+    },
   };
 }
 

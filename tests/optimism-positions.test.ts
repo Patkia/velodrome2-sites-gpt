@@ -91,6 +91,15 @@ assert.deepEqual(await zeroResponse.json(), {
   positions: [],
   unavailablePositionIds: [],
   warnings: [],
+  diagnostics: {
+    v2OwnedCount: 0,
+    unstakedTokenIdsEnumerated: 0,
+    unstakedPositionsHydrated: 0,
+    liquidityZeroExcluded: 0,
+    activeUnstakedPositions: 0,
+    failedUnstakedPositions: 0,
+    sampleUnstakedTokenIds: [],
+  },
 });
 assert.deepEqual([...new Set(zeroMethods)].sort(), ["eth_call", "eth_chainId"]);
 
@@ -220,6 +229,15 @@ const unstakedOnlyPayload = await unstakedOnlyResponse.json() as {
   positions: Array<{ positionId: string; source: string; version: string; liquidity: string; inRange: boolean }>;
   unavailablePositionIds: string[];
   warnings: string[];
+  diagnostics: {
+    v2OwnedCount: number;
+    unstakedTokenIdsEnumerated: number;
+    unstakedPositionsHydrated: number;
+    liquidityZeroExcluded: number;
+    activeUnstakedPositions: number;
+    failedUnstakedPositions: number;
+    sampleUnstakedTokenIds: string[];
+  };
 };
 assert.equal(unstakedOnlyPayload.positionsChecked, 2);
 assert.deepEqual(unstakedOnlyPayload.positions.map(({ positionId, source, version }) => ({ positionId, source, version })), [
@@ -230,6 +248,57 @@ assert.deepEqual(unstakedOnlyPayload.positions.map((position) => position.liquid
 assert.deepEqual(unstakedOnlyPayload.positions.map((position) => position.inRange), [true, false]);
 assert.deepEqual(unstakedOnlyPayload.unavailablePositionIds, []);
 assert.deepEqual(unstakedOnlyPayload.warnings, []);
+assert.deepEqual(unstakedOnlyPayload.diagnostics, {
+  v2OwnedCount: 3,
+  unstakedTokenIdsEnumerated: 3,
+  unstakedPositionsHydrated: 3,
+  liquidityZeroExcluded: 1,
+  activeUnstakedPositions: 2,
+  failedUnstakedPositions: 0,
+  sampleUnstakedTokenIds: ["200", "201", "202"],
+});
+
+const allZeroLiquidity = Array.from({ length: 55 }, (_, index) => ({
+  id: BigInt(1000 + index),
+  liquidity: BigInt(0),
+  tickLower: -100,
+  currentTick: 20,
+  tickUpper: 100,
+}));
+const allZeroLiquidityResponse = await createOptimismPositionsResponse({
+  rpcUrl,
+  walletAddress,
+  fetchImpl: createCombinedMockFetch({ unstakedV2: allZeroLiquidity }),
+});
+assert.equal(allZeroLiquidityResponse.status, 200);
+const allZeroLiquidityPayload = await allZeroLiquidityResponse.json() as {
+  positionsChecked: number;
+  positions: unknown[];
+  unavailablePositionIds: string[];
+  warnings: string[];
+  diagnostics: {
+    v2OwnedCount: number;
+    unstakedTokenIdsEnumerated: number;
+    unstakedPositionsHydrated: number;
+    liquidityZeroExcluded: number;
+    activeUnstakedPositions: number;
+    failedUnstakedPositions: number;
+    sampleUnstakedTokenIds: string[];
+  };
+};
+assert.equal(allZeroLiquidityPayload.positionsChecked, 0);
+assert.deepEqual(allZeroLiquidityPayload.positions, []);
+assert.deepEqual(allZeroLiquidityPayload.unavailablePositionIds, []);
+assert.deepEqual(allZeroLiquidityPayload.warnings, []);
+assert.deepEqual(allZeroLiquidityPayload.diagnostics, {
+  v2OwnedCount: 55,
+  unstakedTokenIdsEnumerated: 55,
+  unstakedPositionsHydrated: 55,
+  liquidityZeroExcluded: 55,
+  activeUnstakedPositions: 0,
+  failedUnstakedPositions: 0,
+  sampleUnstakedTokenIds: ["1000", "1001", "1002"],
+});
 
 const mixedResponse = await createOptimismPositionsResponse({
   rpcUrl,
@@ -268,10 +337,28 @@ const partialPayload = await partialResponse.json() as {
   positions: Array<{ positionId: string }>;
   unavailablePositionIds: string[];
   warnings: string[];
+  diagnostics: {
+    v2OwnedCount: number;
+    unstakedTokenIdsEnumerated: number;
+    unstakedPositionsHydrated: number;
+    liquidityZeroExcluded: number;
+    activeUnstakedPositions: number;
+    failedUnstakedPositions: number;
+    sampleUnstakedTokenIds: string[];
+  };
 };
 assert.deepEqual(partialPayload.positions.map((position) => position.positionId), ["500"]);
 assert.deepEqual(partialPayload.unavailablePositionIds, ["V2:501"]);
 assert.deepEqual(partialPayload.warnings, ["POSITION_READ_PARTIAL"]);
+assert.deepEqual(partialPayload.diagnostics, {
+  v2OwnedCount: 2,
+  unstakedTokenIdsEnumerated: 2,
+  unstakedPositionsHydrated: 1,
+  liquidityZeroExcluded: 0,
+  activeUnstakedPositions: 1,
+  failedUnstakedPositions: 1,
+  sampleUnstakedTokenIds: ["500", "501"],
+});
 
 const concurrencyState = { active: 0, max: 0 };
 const concurrencyPositions = Array.from({ length: 12 }, (_, index) => ({
