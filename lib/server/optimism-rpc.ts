@@ -1,11 +1,10 @@
 const OPTIMISM_CHAIN_ID = 10;
 const RPC_METHOD = "eth_chainId";
-const DEFAULT_TIMEOUT_MS = 5_000;
 
 export type OptimismProbeErrorCode =
   | "CONFIGURATION_UNAVAILABLE"
+  | "RUNTIME_SETUP_FAILED"
   | "FETCH_FAILED"
-  | "FETCH_TIMEOUT"
   | "UPSTREAM_HTTP_ERROR"
   | "INVALID_JSON"
   | "RPC_ERROR"
@@ -20,7 +19,6 @@ type OptimismProbeErrorDetails = {
 interface ProbeOptions {
   rpcUrl?: string;
   fetchImpl?: typeof fetch;
-  timeoutMs?: number;
 }
 
 class OptimismProbeError extends Error {
@@ -37,15 +35,16 @@ class OptimismProbeError extends Error {
 
 export async function probeOptimismChainId({
   rpcUrl,
-  fetchImpl = fetch,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  fetchImpl,
 }: ProbeOptions): Promise<number> {
-  const endpoint = parseRpcEndpoint(rpcUrl);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
-    const response = await fetchImpl(endpoint, {
+    if (typeof fetch !== "function" || (fetchImpl !== undefined && typeof fetchImpl !== "function")) {
+      throw new OptimismProbeError("RUNTIME_SETUP_FAILED");
+    }
+
+    const endpoint = parseRpcEndpoint(rpcUrl);
+    const requestFetch = fetchImpl ?? fetch;
+    const response = await requestFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -56,9 +55,6 @@ export async function probeOptimismChainId({
         method: RPC_METHOD,
         params: [],
       }),
-      cache: "no-store",
-      redirect: "error",
-      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -83,12 +79,7 @@ export async function probeOptimismChainId({
     return chainId;
   } catch (error) {
     if (error instanceof OptimismProbeError) throw error;
-    if (controller.signal.aborted) {
-      throw new OptimismProbeError("FETCH_TIMEOUT");
-    }
     throw new OptimismProbeError("FETCH_FAILED");
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -101,7 +92,7 @@ export async function createOptimismHealthResponse(options: ProbeOptions): Promi
     const code = error instanceof OptimismProbeError
       ? error.code
       : "FETCH_FAILED";
-    const status = code === "CONFIGURATION_UNAVAILABLE" || code === "FETCH_TIMEOUT"
+    const status = code === "CONFIGURATION_UNAVAILABLE" || code === "RUNTIME_SETUP_FAILED"
       ? 503
       : 502;
     const details = error instanceof OptimismProbeError ? error.details : {};
@@ -118,7 +109,7 @@ export async function createOptimismHealthResponse(options: ProbeOptions): Promi
 }
 
 function parseRpcEndpoint(rpcUrl?: string): string {
-  if (!rpcUrl) {
+  if (typeof rpcUrl !== "string" || rpcUrl.trim() === "") {
     throw new OptimismProbeError("CONFIGURATION_UNAVAILABLE");
   }
 

@@ -21,7 +21,7 @@ assert.equal(chainId, 10);
 assert.ok(capturedRequest);
 assert.equal(capturedRequest.input, rpcUrl);
 assert.equal(capturedRequest.init?.method, "POST");
-assert.equal(capturedRequest.init?.redirect, "error");
+assert.deepEqual(Object.keys(capturedRequest.init ?? {}).sort(), ["body", "headers", "method"]);
 
 const rpcRequest = JSON.parse(String(capturedRequest.init?.body));
 assert.deepEqual(rpcRequest, {
@@ -45,18 +45,15 @@ assert.equal(missingEnvPayload.status, "error");
 assert.equal(missingEnvPayload.error.code, "CONFIGURATION_UNAVAILABLE");
 assert.equal(typeof missingEnvPayload.error.durationMs, "number");
 
-const timeoutResponse = await createOptimismHealthResponse({
+const runtimeSetupResponse = await createOptimismHealthResponse({
   rpcUrl,
-  timeoutMs: 5,
-  fetchImpl: async (_input, init) => new Promise<Response>((_resolve, reject) => {
-    init?.signal?.addEventListener("abort", () => reject(new Error("credential leak bait")));
-  }),
+  fetchImpl: null as unknown as typeof fetch,
 });
-assert.equal(timeoutResponse.status, 503);
-const timeoutPayload = await timeoutResponse.json() as ErrorPayload;
-assert.equal(timeoutPayload.status, "error");
-assert.equal(timeoutPayload.error.code, "FETCH_TIMEOUT");
-assert.equal(typeof timeoutPayload.error.durationMs, "number");
+assert.equal(runtimeSetupResponse.status, 503);
+const runtimeSetupPayload = await runtimeSetupResponse.json() as ErrorPayload;
+assert.equal(runtimeSetupPayload.status, "error");
+assert.equal(runtimeSetupPayload.error.code, "RUNTIME_SETUP_FAILED");
+assert.equal(typeof runtimeSetupPayload.error.durationMs, "number");
 
 const upstreamResponse = await createOptimismHealthResponse({
   rpcUrl,

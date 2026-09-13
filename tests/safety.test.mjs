@@ -41,7 +41,8 @@ assert.match(optimismRouteSource, /export async function HEAD/);
 assert.match(optimismRouteSource, /export async function OPTIONS/);
 assert.doesNotMatch(optimismRouteSource, /export async function (POST|PUT|PATCH|DELETE)/);
 assert.doesNotMatch(pageSource, /OPTIMISM_RPC_URL|\/api\/health\/optimism/);
-assert.equal((optimismClientSource.match(/fetchImpl\(/g) ?? []).length, 1);
+assert.equal((optimismClientSource.match(/requestFetch\(/g) ?? []).length, 1);
+assert.doesNotMatch(optimismClientSource, /AbortController|AbortSignal|setTimeout|cache:|redirect:|signal:/);
 assert.match(optimismClientSource, /const RPC_METHOD = "eth_chainId"/);
 assert.doesNotMatch(optimismClientSource, /console\.|https?:\/\//);
 
