@@ -7,6 +7,8 @@ export async function GET(request: Request): Promise<Response> {
     walletAddress: process.env.WALLET_ADDRESS,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID,
+    upstashRestUrl: process.env.UPSTASH_REDIS_REST_URL,
+    upstashRestToken: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
 }
 

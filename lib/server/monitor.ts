@@ -1,19 +1,29 @@
 import { readLivePositions } from "./live-positions.ts";
 import { isTelegramConfigured, sendTelegramMessage } from "./telegram.ts";
+import {
+  StateStoreError,
+  UpstashStateStore,
+  isStateConfigured,
+  type StateStore,
+} from "./upstash-state.ts";
 import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
 
 type LiveReader = typeof readLivePositions;
 type TelegramSender = typeof sendTelegramMessage;
+type InternalPosition = DashboardPosition & { positionManager?: string };
 
 type MonitorOptions = {
   optimismRpcUrl?: string;
   walletAddress?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
+  upstashRestUrl?: string;
+  upstashRestToken?: string;
   testNotification?: boolean;
   fetchImpl?: typeof fetch;
   readLive?: LiveReader;
   sendTelegram?: TelegramSender;
+  stateStore?: StateStore;
 };
 
 type MonitorPosition = {
@@ -53,60 +63,225 @@ function outOfRangeMessage(position: MonitorPosition): string {
     `Out of range: [${position.chain.toUpperCase()}] ${position.pair}`,
     `Position #${position.positionId}`,
     `Tick: ${position.currentTick} (${position.tickLower} → ${position.tickUpper})`,
-    "Source: ChatGPT Sites stateless test",
+    "Source: ChatGPT Sites stateful monitor",
   ].join("\n");
 }
 
-const TEST_MESSAGE = "Velodrome2 Sites test notification\nSource: ChatGPT Sites owner-only manual test";
+function positionStateKey(position: InternalPosition): string | null {
+  if (!position.positionManager) return null;
+  const manager = position.positionManager.toLowerCase().replace(/^0x/, "");
+  return `${position.chainId}-${manager}-${position.positionId}.out-of-range`;
+}
 
-export async function readMonitorStateless(options: MonitorOptions) {
+function hasIncompleteBlockchainCoverage(live: PositionsResponse): boolean {
+  if (live.unavailableChains.length > 0) return true;
+  return live.warnings.some((warning) => (
+    warning.includes("CHAIN_UNAVAILABLE")
+    || warning.includes("MULTICHAIN_UNAVAILABLE")
+    || warning.includes("GAUGE_READ_PARTIAL")
+    || warning.includes("POSITION_READ_PARTIAL")
+  ));
+}
+
+function stateErrorCode(error: unknown): string {
+  return error instanceof StateStoreError ? error.code : "STATE_BACKEND_FAILED";
+}
+
+const TEST_MESSAGE = "Velodrome2 Sites test notification\nSource: ChatGPT Sites manual test";
+
+async function readLive(options: MonitorOptions): Promise<PositionsResponse> {
   const reader = options.readLive ?? readLivePositions;
-  const sender = options.sendTelegram ?? sendTelegramMessage;
-  const live: PositionsResponse = await reader({
+  return reader({
     optimismRpcUrl: options.optimismRpcUrl,
     walletAddress: options.walletAddress,
     fetchImpl: options.fetchImpl,
+    includeStateIdentity: true,
   });
+}
 
-  const positions = live.positions.map(sanitizePosition);
-  const outOfRangePositions = positions.filter((position) => !position.inRange);
-  const inRange = positions.length - outOfRangePositions.length;
-  const warnings = [...live.warnings];
-  const telegramOptions = {
+function telegramOptions(options: MonitorOptions) {
+  return {
     botToken: options.telegramBotToken,
     chatId: options.telegramChatId,
     fetchImpl: options.fetchImpl,
   };
-  const telegramAvailable = isTelegramConfigured(telegramOptions);
+}
+
+export async function readMonitorStateful(options: MonitorOptions) {
+  const live = await readLive(options);
+  const internalPositions = live.positions as InternalPosition[];
+  const positions = internalPositions.map(sanitizePosition);
+  const outOfRangePositions = positions.filter((position) => !position.inRange);
+  const inRange = positions.length - outOfRangePositions.length;
+  const warnings = [...live.warnings];
+  const sender = options.sendTelegram ?? sendTelegramMessage;
+  const tgOptions = telegramOptions(options);
+  const telegramAvailable = isTelegramConfigured(tgOptions);
   let notificationsAttempted = 0;
   let notificationsSent = 0;
+  let notificationsSuppressed = 0;
+  let stateWrites = 0;
+  let stateDeletes = 0;
 
-  const messages = options.testNotification
-    ? [TEST_MESSAGE]
-    : outOfRangePositions.map(outOfRangeMessage);
-
-  for (const message of messages) {
-    notificationsAttempted++;
-    const result = await sender(message, telegramOptions);
-    if (result.sent) {
-      notificationsSent++;
-    } else if (result.errorCode) {
-      warnings.push(result.errorCode);
-    }
+  if (options.testNotification) {
+    notificationsAttempted = 1;
+    const result = await sender(TEST_MESSAGE, tgOptions);
+    if (result.sent) notificationsSent = 1;
+    else if (result.errorCode) warnings.push(result.errorCode);
+    return {
+      schemaVersion: 1,
+      status: result.sent && live.status === "ok" ? "ok" as const : "partial" as const,
+      mode: "manual-test" as const,
+      sideEffects: true,
+      persistentDeduplication: false,
+      testNotification: true,
+      generatedAt: live.generatedAt,
+      positionsChecked: positions.length,
+      inRange,
+      outOfRange: outOfRangePositions.length,
+      positionsByChain: live.chainCounts,
+      currentOutOfRangePositions: outOfRangePositions,
+      positions,
+      unavailableChains: live.unavailableChains,
+      warnings: [...new Set(warnings)],
+      telegramAvailable,
+      notificationsAttempted,
+      notificationsSent,
+      notificationsSuppressed,
+      stateWrites,
+      stateDeletes,
+    };
   }
 
-  const uniqueWarnings = [...new Set(warnings)];
+  const configured = options.stateStore !== undefined || isStateConfigured({
+    restUrl: options.upstashRestUrl,
+    restToken: options.upstashRestToken,
+  });
 
+  if (!configured) {
+    warnings.push("STATE_UNAVAILABLE");
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: false,
+    });
+  }
+
+  if (hasIncompleteBlockchainCoverage(live)) {
+    warnings.push("STATE_PROCESSING_SKIPPED_INCOMPLETE_COVERAGE");
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: true,
+    });
+  }
+
+  const keyed = internalPositions.map((position, index) => ({
+    position,
+    publicPosition: positions[index],
+    key: positionStateKey(position),
+  }));
+  if (keyed.some((item) => item.key === null)) {
+    warnings.push("STATE_IDENTITY_UNAVAILABLE");
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: true,
+    });
+  }
+
+  const store = options.stateStore ?? new UpstashStateStore({
+    restUrl: options.upstashRestUrl,
+    restToken: options.upstashRestToken,
+    fetchImpl: options.fetchImpl,
+  });
+  const existing = new Map<string, boolean>();
+  try {
+    for (const item of keyed) existing.set(item.key!, await store.exists(item.key!));
+  } catch (error) {
+    warnings.push(stateErrorCode(error));
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: true,
+    });
+  }
+
+  const recovery = keyed.filter((item) => item.position.inRange && existing.get(item.key!) === true);
+  const pending = keyed.filter((item) => !item.position.inRange && existing.get(item.key!) === false);
+  notificationsSuppressed = keyed.filter((item) => !item.position.inRange && existing.get(item.key!) === true).length;
+
+  try {
+    for (const item of recovery) {
+      await store.delete(item.key!);
+      stateDeletes++;
+    }
+  } catch (error) {
+    warnings.push(stateErrorCode(error));
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: true,
+    });
+  }
+
+  try {
+    for (const item of pending) {
+      await store.write(item.key!, `pair=${item.publicPosition.pair}\nsource=chatgpt-sites`);
+      stateWrites++;
+    }
+  } catch (error) {
+    warnings.push(stateErrorCode(error));
+    return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+      notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+      persistentDeduplication: true,
+    });
+  }
+
+  for (const item of pending) {
+    notificationsAttempted++;
+    const result = await sender(outOfRangeMessage(item.publicPosition), tgOptions);
+    if (result.sent) {
+      notificationsSent++;
+      continue;
+    }
+    if (result.errorCode) warnings.push(result.errorCode);
+    try {
+      await store.delete(item.key!);
+      stateDeletes++;
+    } catch (error) {
+      warnings.push(stateErrorCode(error));
+    }
+    break;
+  }
+
+  return statefulResult(live, positions, outOfRangePositions, warnings, telegramAvailable, {
+    notificationsAttempted, notificationsSent, notificationsSuppressed, stateWrites, stateDeletes,
+    persistentDeduplication: true,
+  });
+}
+
+function statefulResult(
+  live: PositionsResponse,
+  positions: MonitorPosition[],
+  outOfRangePositions: MonitorPosition[],
+  warnings: string[],
+  telegramAvailable: boolean,
+  counters: {
+    notificationsAttempted: number;
+    notificationsSent: number;
+    notificationsSuppressed: number;
+    stateWrites: number;
+    stateDeletes: number;
+    persistentDeduplication: boolean;
+  },
+) {
+  const uniqueWarnings = [...new Set(warnings)];
   return {
     schemaVersion: 1,
     status: live.status === "partial" || uniqueWarnings.length > live.warnings.length ? "partial" as const : "ok" as const,
-    mode: "stateless-test" as const,
-    sideEffects: notificationsAttempted > 0,
-    persistentDeduplication: false,
-    testNotification: options.testNotification === true,
+    mode: "stateful" as const,
+    sideEffects: counters.notificationsAttempted > 0 || counters.stateWrites > 0 || counters.stateDeletes > 0,
+    persistentDeduplication: counters.persistentDeduplication,
+    testNotification: false,
     generatedAt: live.generatedAt,
     positionsChecked: positions.length,
-    inRange,
+    inRange: positions.length - outOfRangePositions.length,
     outOfRange: outOfRangePositions.length,
     positionsByChain: live.chainCounts,
     currentOutOfRangePositions: outOfRangePositions,
@@ -114,19 +289,21 @@ export async function readMonitorStateless(options: MonitorOptions) {
     unavailableChains: live.unavailableChains,
     warnings: uniqueWarnings,
     telegramAvailable,
-    notificationsAttempted,
-    notificationsSent,
-    notificationEvaluation: {
-      currentStateEvaluated: true,
-      persistentStateAvailable: false,
-      productionEquivalentDeduplication: false,
-    },
+    notificationsAttempted: counters.notificationsAttempted,
+    notificationsSent: counters.notificationsSent,
+    notificationsSuppressed: counters.notificationsSuppressed,
+    stateWrites: counters.stateWrites,
+    stateDeletes: counters.stateDeletes,
   };
+}
+
+export async function readMonitorStateless(options: MonitorOptions) {
+  return readMonitorStateful({ ...options, stateStore: undefined, upstashRestUrl: undefined, upstashRestToken: undefined });
 }
 
 export async function createMonitorResponse(options: MonitorOptions): Promise<Response> {
   try {
-    return Response.json(await readMonitorStateless(options), {
+    return Response.json(await readMonitorStateful(options), {
       status: 200,
       headers: { "Cache-Control": "no-store" },
     });
@@ -135,11 +312,14 @@ export async function createMonitorResponse(options: MonitorOptions): Promise<Re
       {
         schemaVersion: 1,
         status: "error",
-        mode: "stateless-test",
+        mode: options.testNotification ? "manual-test" : "stateful",
         persistentDeduplication: false,
         testNotification: options.testNotification === true,
         notificationsAttempted: 0,
         notificationsSent: 0,
+        notificationsSuppressed: 0,
+        stateWrites: 0,
+        stateDeletes: 0,
         error: { code: "MONITOR_UNAVAILABLE" },
       },
       { status: 502, headers: { "Cache-Control": "no-store" } },

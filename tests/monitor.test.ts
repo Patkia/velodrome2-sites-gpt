@@ -1,150 +1,230 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { createMonitorResponse, readMonitorStateless } from "../lib/server/monitor.ts";
+import { createMonitorResponse, readMonitorStateful } from "../lib/server/monitor.ts";
+import { StateStoreError, type StateStore } from "../lib/server/upstash-state.ts";
 import type { PositionsResponse } from "../lib/shared/positions-schema.ts";
 
-const base: PositionsResponse = {
-  schemaVersion: 1,
-  status: "ok",
-  generatedAt: "2026-09-13T12:00:00.000Z",
-  walletAddress: "0x1234...abcd",
-  positionsChecked: 2,
-  positions: [
-    {
-      chain: "Celo", chainId: 42220, positionId: "2", source: "staked", liquidity: "200",
+const POSITION_MANAGER = "0x991d5546C4B442B4c5fdc4c8B8b8d131DEB24702";
+
+function live(inRange: boolean, overrides: Partial<PositionsResponse> = {}): PositionsResponse {
+  return {
+    schemaVersion: 1,
+    status: "ok",
+    generatedAt: "2026-09-13T12:00:00.000Z",
+    walletAddress: "0x1234...abcd",
+    positionsChecked: 1,
+    positions: [{
+      chain: "Celo", chainId: 42220, positionId: "66532", source: "staked", liquidity: "200",
       token0: "0x0000000000000000000000000000000000000003", token0Symbol: "CELO", token0Decimals: 18,
       token1: "0x0000000000000000000000000000000000000004", token1Symbol: "USDC", token1Decimals: 6,
-      tickLower: -50, tickUpper: 50, currentTick: 0, inRange: true, status: "in-range",
-    },
-    {
-      chain: "Soneium", chainId: 1868, positionId: "3", source: "staked", liquidity: "300",
-      token0: "0x0000000000000000000000000000000000000005", token0Symbol: "ASTR", token0Decimals: 18,
-      token1: "0x0000000000000000000000000000000000000006", token1Symbol: "WETH", token1Decimals: 18,
-      tickLower: -200, tickUpper: -100, currentTick: -150, inRange: true, status: "in-range",
-    },
-  ],
-  chainCounts: { Optimism: 0, Celo: 1, Soneium: 1 },
-  unavailableChains: [],
-  warnings: [],
-};
+      tickLower: -50, tickUpper: 50, currentTick: inRange ? 0 : 100, inRange,
+      status: inRange ? "in-range" : "out-of-range",
+      positionManager: POSITION_MANAGER,
+    } as never],
+    chainCounts: { Optimism: 0, Celo: 1, Soneium: 0 },
+    unavailableChains: [],
+    warnings: [],
+    ...overrides,
+  };
+}
 
-const successfulSender = async () => ({ sent: true as const });
+class MemoryStateStore implements StateStore {
+  keys = new Set<string>();
+  existsCalls = 0;
+  writeCalls = 0;
+  deleteCalls = 0;
+  failExists = false;
+  failWrite = false;
+  failDelete = false;
 
-const allInRange = await readMonitorStateless({
-  readLive: (async () => base) as never,
-  sendTelegram: successfulSender as never,
-  telegramBotToken: "fake-token",
-  telegramChatId: "fake-chat",
-});
-assert.equal(allInRange.mode, "stateless-test");
-assert.equal(allInRange.persistentDeduplication, false);
-assert.equal(allInRange.positionsChecked, 2);
-assert.equal(allInRange.inRange, 2);
-assert.equal(allInRange.outOfRange, 0);
-assert.equal(allInRange.notificationsAttempted, 0);
-assert.equal(allInRange.notificationsSent, 0);
+  async exists(key: string) {
+    this.existsCalls++;
+    if (this.failExists) throw new StateStoreError("STATE_READ_FAILED");
+    return this.keys.has(key);
+  }
+  async write(key: string) {
+    this.writeCalls++;
+    if (this.failWrite) throw new StateStoreError("STATE_WRITE_FAILED");
+    this.keys.add(key);
+  }
+  async delete(key: string) {
+    this.deleteCalls++;
+    if (this.failDelete) throw new StateStoreError("STATE_DELETE_FAILED");
+    this.keys.delete(key);
+  }
+}
 
-const outOfRangeLive: PositionsResponse = {
-  ...base,
-  positions: [
-    { ...base.positions[0], currentTick: 100, inRange: false, status: "out-of-range" },
-    base.positions[1],
-  ],
-};
-
-const sentMessages: string[] = [];
-const recordingSender = async (message: string) => {
-  sentMessages.push(message);
+const sent: string[] = [];
+const sender = async (message: string) => {
+  sent.push(message);
   return { sent: true as const };
 };
-const outOfRange = await readMonitorStateless({
-  readLive: (async () => outOfRangeLive) as never,
-  sendTelegram: recordingSender as never,
+const store = new MemoryStateStore();
+
+const first = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: store,
+  sendTelegram: sender as never,
   telegramBotToken: "fake-token",
   telegramChatId: "fake-chat",
 });
-assert.equal(outOfRange.outOfRange, 1);
-assert.equal(outOfRange.notificationsAttempted, 1);
-assert.equal(outOfRange.notificationsSent, 1);
-assert.equal(sentMessages.length, 1);
-assert.match(sentMessages[0], /Out of range: \[CELO\] CELO \/ USDC/);
+assert.equal(first.mode, "stateful");
+assert.equal(first.persistentDeduplication, true);
+assert.equal(first.notificationsAttempted, 1);
+assert.equal(first.notificationsSent, 1);
+assert.equal(first.notificationsSuppressed, 0);
+assert.equal(first.stateWrites, 1);
+assert.equal(sent.length, 1);
 
-await readMonitorStateless({
-  readLive: (async () => outOfRangeLive) as never,
-  sendTelegram: recordingSender as never,
+const repeated = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: store,
+  sendTelegram: sender as never,
   telegramBotToken: "fake-token",
   telegramChatId: "fake-chat",
 });
-assert.equal(sentMessages.length, 2, "stateless repeated calls may send duplicate alerts");
+assert.equal(repeated.notificationsAttempted, 0);
+assert.equal(repeated.notificationsSent, 0);
+assert.equal(repeated.notificationsSuppressed, 1);
+assert.equal(sent.length, 1);
 
+const recovered = await readMonitorStateful({
+  readLive: (async () => live(true)) as never,
+  stateStore: store,
+  sendTelegram: sender as never,
+  telegramBotToken: "fake-token",
+  telegramChatId: "fake-chat",
+});
+assert.equal(recovered.stateDeletes, 1);
+assert.equal(recovered.notificationsAttempted, 0);
+assert.equal(store.keys.size, 0);
+
+const again = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: store,
+  sendTelegram: sender as never,
+  telegramBotToken: "fake-token",
+  telegramChatId: "fake-chat",
+});
+assert.equal(again.notificationsSent, 1);
+assert.equal(sent.length, 2);
+
+const rollbackStore = new MemoryStateStore();
+const telegramFailure = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: rollbackStore,
+  sendTelegram: (async () => ({ sent: false as const, errorCode: "TELEGRAM_SEND_FAILED" as const })) as never,
+  telegramBotToken: "hidden-token",
+  telegramChatId: "hidden-chat",
+});
+assert.equal(telegramFailure.notificationsAttempted, 1);
+assert.equal(telegramFailure.notificationsSent, 0);
+assert.equal(telegramFailure.stateWrites, 1);
+assert.equal(telegramFailure.stateDeletes, 1);
+assert.equal(rollbackStore.keys.size, 0);
+assert.equal(telegramFailure.warnings.includes("TELEGRAM_SEND_FAILED"), true);
+assert.equal(JSON.stringify(telegramFailure).includes("hidden-token"), false);
+
+const readFailStore = new MemoryStateStore();
+readFailStore.failExists = true;
+let readFailSends = 0;
+const readFailure = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: readFailStore,
+  sendTelegram: (async () => { readFailSends++; return { sent: true as const }; }) as never,
+});
+assert.equal(readFailure.warnings.includes("STATE_READ_FAILED"), true);
+assert.equal(readFailSends, 0);
+assert.equal(readFailStore.writeCalls, 0);
+assert.equal(readFailStore.deleteCalls, 0);
+
+const writeFailStore = new MemoryStateStore();
+writeFailStore.failWrite = true;
+let writeFailSends = 0;
+const writeFailure = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: writeFailStore,
+  sendTelegram: (async () => { writeFailSends++; return { sent: true as const }; }) as never,
+});
+assert.equal(writeFailure.warnings.includes("STATE_WRITE_FAILED"), true);
+assert.equal(writeFailSends, 0);
+
+const deleteFailStore = new MemoryStateStore();
+deleteFailStore.keys.add("42220-991d5546c4b442b4c5fdc4c8b8b8d131deb24702-66532.out-of-range");
+deleteFailStore.failDelete = true;
+const deleteFailure = await readMonitorStateful({
+  readLive: (async () => live(true)) as never,
+  stateStore: deleteFailStore,
+  sendTelegram: sender as never,
+});
+assert.equal(deleteFailure.warnings.includes("STATE_DELETE_FAILED"), true);
+
+const partialStore = new MemoryStateStore();
+let partialSends = 0;
+const partial = await readMonitorStateful({
+  readLive: (async () => live(false, {
+    status: "partial",
+    unavailableChains: ["Optimism"],
+    warnings: ["OPTIMISM_UNAVAILABLE"],
+  })) as never,
+  stateStore: partialStore,
+  sendTelegram: (async () => { partialSends++; return { sent: true as const }; }) as never,
+});
+assert.equal(partial.status, "partial");
+assert.equal(partial.warnings.includes("STATE_PROCESSING_SKIPPED_INCOMPLETE_COVERAGE"), true);
+assert.equal(partialStore.existsCalls, 0);
+assert.equal(partialStore.writeCalls, 0);
+assert.equal(partialStore.deleteCalls, 0);
+assert.equal(partialSends, 0);
+
+const manualStore = new MemoryStateStore();
 const manualMessages: string[] = [];
-const manual = await readMonitorStateless({
-  readLive: (async () => outOfRangeLive) as never,
-  sendTelegram: (async (message: string) => {
-    manualMessages.push(message);
-    return { sent: true as const };
-  }) as never,
+const manual = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  stateStore: manualStore,
+  sendTelegram: (async (message: string) => { manualMessages.push(message); return { sent: true as const }; }) as never,
   telegramBotToken: "fake-token",
   telegramChatId: "fake-chat",
   testNotification: true,
 });
-assert.equal(manual.testNotification, true);
+assert.equal(manual.mode, "manual-test");
 assert.equal(manual.notificationsAttempted, 1);
 assert.equal(manual.notificationsSent, 1);
-assert.equal(manualMessages.length, 1);
+assert.equal(manualStore.existsCalls, 0);
+assert.equal(manualStore.writeCalls, 0);
+assert.equal(manualStore.deleteCalls, 0);
 assert.match(manualMessages[0], /Velodrome2 Sites test notification/);
 assert.doesNotMatch(manualMessages[0], /Out of range/);
 
-const missingEnv = await readMonitorStateless({
-  readLive: (async () => outOfRangeLive) as never,
-  sendTelegram: (async () => ({ sent: false as const, errorCode: "TELEGRAM_UNAVAILABLE" as const })) as never,
+let missingStateSends = 0;
+const missingState = await readMonitorStateful({
+  readLive: (async () => live(false)) as never,
+  sendTelegram: (async () => { missingStateSends++; return { sent: true as const }; }) as never,
 });
-assert.equal(missingEnv.positionsChecked, 2);
-assert.equal(missingEnv.notificationsAttempted, 1);
-assert.equal(missingEnv.notificationsSent, 0);
-assert.equal(missingEnv.status, "partial");
-assert.equal(missingEnv.warnings.includes("TELEGRAM_UNAVAILABLE"), true);
+assert.equal(missingState.mode, "stateful");
+assert.equal(missingState.persistentDeduplication, false);
+assert.equal(missingState.warnings.includes("STATE_UNAVAILABLE"), true);
+assert.equal(missingState.notificationsAttempted, 0);
+assert.equal(missingStateSends, 0);
 
-const telegramFailure = await readMonitorStateless({
-  readLive: (async () => outOfRangeLive) as never,
-  sendTelegram: (async () => ({ sent: false as const, errorCode: "TELEGRAM_SEND_FAILED" as const })) as never,
-  telegramBotToken: "super-secret-token",
-  telegramChatId: "secret-chat-id",
-});
-const failureJson = JSON.stringify(telegramFailure);
-assert.equal(telegramFailure.status, "partial");
-assert.equal(telegramFailure.notificationsSent, 0);
-assert.equal(telegramFailure.warnings.includes("TELEGRAM_SEND_FAILED"), true);
-assert.equal(failureJson.includes("super-secret-token"), false);
-assert.equal(failureJson.includes("secret-chat-id"), false);
-
-const partial = await readMonitorStateless({
-  readLive: (async () => ({ ...base, status: "partial" as const, unavailableChains: ["Optimism"], warnings: ["OPTIMISM_UNAVAILABLE"] })) as never,
-  sendTelegram: successfulSender as never,
-  telegramBotToken: "fake-token",
-  telegramChatId: "fake-chat",
-});
-assert.equal(partial.status, "partial");
-assert.deepEqual(partial.unavailableChains, ["Optimism"]);
-
-const errorResponse = await createMonitorResponse({ readLive: (async () => { throw new Error("secret rpc body"); }) as never });
+const errorResponse = await createMonitorResponse({ readLive: (async () => { throw new Error("private rpc detail"); }) as never });
 assert.equal(errorResponse.status, 502);
 const errorBody = await errorResponse.json() as Record<string, unknown>;
 assert.equal(errorBody.status, "error");
-assert.equal(errorBody.mode, "stateless-test");
-assert.equal(JSON.stringify(errorBody).includes("secret rpc body"), false);
+assert.equal(errorBody.mode, "stateful");
+assert.equal(JSON.stringify(errorBody).includes("private rpc detail"), false);
 
 const routeSource = fs.readFileSync("app/api/cron/monitor/route.ts", "utf8");
 const handlerSource = fs.readFileSync("lib/server/cron-monitor-route.ts", "utf8");
 const source = fs.readFileSync("lib/server/monitor.ts", "utf8");
 assert.match(handlerSource, /testNotification/);
-assert.match(routeSource, /process\.env\.TELEGRAM_BOT_TOKEN/);
-assert.match(routeSource, /process\.env\.TELEGRAM_CHAT_ID/);
+assert.match(routeSource, /process\.env\.UPSTASH_REDIS_REST_URL/);
+assert.match(routeSource, /process\.env\.UPSTASH_REDIS_REST_TOKEN/);
 assert.match(routeSource, /export async function GET/);
 assert.match(routeSource, /export async function HEAD/);
 assert.match(routeSource, /export async function OPTIONS/);
 assert.doesNotMatch(routeSource, /export async function (POST|PUT|PATCH|DELETE)/);
-assert.doesNotMatch(source, /upstash|redis|vercel\.app|github/i);
+assert.doesNotMatch(source, /vercel\.app|github/i);
 assert.doesNotMatch(source, /writeFile|appendFile|file_put_contents|eth_sendTransaction|eth_sendRawTransaction|personal_sign|eth_sign/);
 
 console.log("monitor.test: PASS");

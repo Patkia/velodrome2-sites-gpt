@@ -9,6 +9,8 @@ type CronMonitorRouteOptions = {
   walletAddress?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
+  upstashRestUrl?: string;
+  upstashRestToken?: string;
   runMonitor?: MonitorRunner;
 };
 
@@ -29,6 +31,8 @@ export async function handleCronMonitorGet(
     walletAddress: options.walletAddress,
     telegramBotToken: options.telegramBotToken,
     telegramChatId: options.telegramChatId,
+    upstashRestUrl: options.upstashRestUrl,
+    upstashRestToken: options.upstashRestToken,
     testNotification: url.searchParams.get("testNotification") === "1",
   });
 }

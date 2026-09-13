@@ -1,5 +1,9 @@
-import { readOptimismPositions } from "./optimism-positions.ts";
-import { MULTICHAIN_RPC_URLS, readMultichainPositionsDiagnostics } from "./multichain-positions.ts";
+import { OPTIMISM_POSITION_MANAGERS, readOptimismPositions } from "./optimism-positions.ts";
+import {
+  MULTICHAIN_POSITION_MANAGER,
+  MULTICHAIN_RPC_URLS,
+  readMultichainPositionsDiagnostics,
+} from "./multichain-positions.ts";
 import { readTokenMetadata } from "./token-metadata.ts";
 import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
 
@@ -14,6 +18,11 @@ type Options = {
   readOptimism?: OptimismReader;
   readMultichain?: MultichainReader;
   readMetadata?: MetadataReader;
+  includeStateIdentity?: boolean;
+};
+
+type InternalDashboardPosition = DashboardPosition & {
+  positionManager?: string;
 };
 
 function normalizePosition(position: {
@@ -28,9 +37,12 @@ function normalizePosition(position: {
   tickUpper: number;
   currentTick: number;
   inRange: boolean;
-}): DashboardPosition {
+  positionManager?: string;
+}): InternalDashboardPosition {
+  const { positionManager, ...publicPosition } = position;
   return {
-    ...position,
+    ...publicPosition,
+    ...(positionManager ? { positionManager } : {}),
     token0Symbol: null,
     token0Decimals: null,
     token1Symbol: null,
@@ -45,7 +57,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
   const metadataReader = options.readMetadata ?? readTokenMetadata;
   const unavailableChains: string[] = [];
   const warnings: string[] = [];
-  const positions: DashboardPosition[] = [];
+  const positions: InternalDashboardPosition[] = [];
   let walletAddress = "unavailable";
 
   const [optimismResult, multichainResult] = await Promise.allSettled([
@@ -75,6 +87,9 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       tickUpper: position.tickUpper,
       currentTick: position.currentTick,
       inRange: position.inRange,
+      positionManager: options.includeStateIdentity
+        ? OPTIMISM_POSITION_MANAGERS[position.version]
+        : undefined,
     })));
   } else {
     unavailableChains.push("Optimism");
@@ -98,6 +113,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
         tickUpper: position.tickUpper,
         currentTick: position.currentTick,
         inRange: position.inRange,
+        positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
       })));
     }
   } else {

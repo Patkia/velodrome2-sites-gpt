@@ -102,6 +102,17 @@ assert.equal(combined.positions[0]?.token1Symbol, "USDC");
 assert.equal(combined.positions[0]?.token1Decimals, 6);
 assert.equal(combined.positions[1]?.token0Symbol, "ASTR");
 assert.equal(combined.positions[1]?.token1Symbol, "WETH");
+assert.equal("positionManager" in combined.positions[0]!, false);
+
+const withStateIdentity = await readLivePositions({
+  walletAddress: "0x1111111111111111111111111111111111111111",
+  optimismRpcUrl: "https://example.invalid",
+  readOptimism: optimismEmpty as never,
+  readMultichain: multichainTwo as never,
+  readMetadata: tokenMetadata as never,
+  includeStateIdentity: true,
+});
+assert.equal((withStateIdentity.positions[0] as typeof withStateIdentity.positions[0] & { positionManager?: string }).positionManager?.toLowerCase(), "0x991d5546c4b442b4c5fdc4c8b8b8d131deb24702");
 
 const metadataPartial = await readLivePositions({
   walletAddress: "0x1111111111111111111111111111111111111111",
