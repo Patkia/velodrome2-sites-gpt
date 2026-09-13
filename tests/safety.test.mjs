@@ -6,6 +6,8 @@ const pageSource = fs.readFileSync("app/page.tsx", "utf8");
 const sharedSource = fs.readFileSync("lib/shared/positions-schema.ts", "utf8");
 const optimismRouteSource = fs.readFileSync("app/api/health/optimism/route.ts", "utf8");
 const optimismClientSource = fs.readFileSync("lib/server/optimism-rpc.ts", "utf8");
+const optimismPositionsRouteSource = fs.readFileSync("app/api/positions/optimism/route.ts", "utf8");
+const optimismPositionsSource = fs.readFileSync("lib/server/optimism-positions.ts", "utf8");
 const hosting = JSON.parse(fs.readFileSync(".openai/hosting.json", "utf8"));
 
 assert.equal(hosting.project_id, "appgprj_6aa5566a21ac81919161a198b81387c3");
@@ -45,6 +47,13 @@ assert.equal((optimismClientSource.match(/requestFetch\(/g) ?? []).length, 1);
 assert.doesNotMatch(optimismClientSource, /AbortController|AbortSignal|setTimeout|cache:|redirect:|signal:/);
 assert.match(optimismClientSource, /const RPC_METHOD = "eth_chainId"/);
 assert.doesNotMatch(optimismClientSource, /console\.|https?:\/\//);
+
+assert.match(optimismPositionsRouteSource, /process\.env\.OPTIMISM_RPC_URL/);
+assert.match(optimismPositionsRouteSource, /process\.env\.WALLET_ADDRESS/);
+assert.doesNotMatch(pageSource, /WALLET_ADDRESS|\/api\/positions\/optimism/);
+assert.doesNotMatch(optimismPositionsSource, /https?:\/\/|AbortController|cache:|redirect:|signal:/);
+assert.match(optimismPositionsSource, /"eth_chainId"/);
+assert.match(optimismPositionsSource, /"eth_call"/);
 
 const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}`;
 for (const forbidden of [
