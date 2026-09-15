@@ -4,6 +4,8 @@ import type { DashboardPosition } from "../shared/positions-schema.ts";
 const EARNED_SELECTOR = "3e491d47";
 const REWARD_TOKEN_SELECTOR = "f7c618c1";
 const PRICE_NAMESPACES: Record<number, string> = { 10: "optimism", 42220: "celo", 1868: "soneium" };
+export const CELO_VELO_REWARD_ADDRESS = "0x7f9adfbd38b669f03d1d11000bc76b9aaea28a81";
+export const OPTIMISM_VELO_ADDRESS = "0x9560e827af36c94d2ac33a39bce1fe78631088db";
 
 type FinancialPosition = DashboardPosition & { gaugeAddress?: string };
 type Options = {
@@ -69,6 +71,14 @@ function displayAmount(value: number): string {
   return value.toLocaleString("en-US", { maximumFractionDigits, useGrouping: false });
 }
 
+function isCeloVeloReward(chainId: number, address: string): boolean {
+  return chainId === 42220 && address.toLowerCase() === CELO_VELO_REWARD_ADDRESS;
+}
+
+function rewardDisplaySymbol(chainId: number, address: string, reportedSymbol: string | null | undefined): string | null {
+  return isCeloVeloReward(chainId, address) ? "VELO" : reportedSymbol ?? null;
+}
+
 async function readPrices(fetchImpl: typeof fetch, tokens: Array<{ chainId: number; address: string }>) {
   const keys = [...new Set(tokens.map(({ chainId, address }) => {
     const namespace = PRICE_NAMESPACES[chainId];
@@ -119,10 +129,17 @@ export async function enrichPositionFinancials(options: Options): Promise<Financ
   const rewardMetadata = rewardTokens.length > 0
     ? await readTokenMetadata({ tokens: rewardTokens, fetchImpl }).catch(() => ({ metadata: new Map(), warnings: [] }))
     : { metadata: new Map(), warnings: [] };
+  const rewardPriceTokens = [...rewards.entries()].flatMap(([key, reward]) => {
+    const chainId = Number(key.split(":", 1)[0]);
+    return [
+      { chainId, address: reward.token },
+      ...(isCeloVeloReward(chainId, reward.token) ? [{ chainId: 10, address: OPTIMISM_VELO_ADDRESS }] : []),
+    ];
+  });
   const priceTokens = options.positions.flatMap((position) => [
     { chainId: position.chainId, address: position.token0 },
     { chainId: position.chainId, address: position.token1 },
-  ]).concat([...rewards.entries()].map(([key, reward]) => ({ chainId: Number(key.split(":", 1)[0]), address: reward.token })));
+  ]).concat(rewardPriceTokens);
   const prices = await readPrices(fetchImpl, priceTokens).catch(() => new Map<string, number>());
 
   return options.positions.map((position) => {
@@ -137,7 +154,12 @@ export async function enrichPositionFinancials(options: Options): Promise<Financ
     const rewardAmountNumber = reward && rewardMeta?.decimals !== null && rewardMeta?.decimals !== undefined
       ? Number(reward.amount) / Math.pow(10, rewardMeta.decimals)
       : null;
-    const rewardPrice = reward && namespace ? prices.get(`${namespace}:${reward.token.toLowerCase()}`) : undefined;
+    const rewardPrice = reward && namespace
+      ? prices.get(`${namespace}:${reward.token.toLowerCase()}`)
+        ?? (isCeloVeloReward(position.chainId, reward.token)
+          ? prices.get(`optimism:${OPTIMISM_VELO_ADDRESS}`)
+          : undefined)
+      : undefined;
     return {
       ...position,
       token0Amount: amounts ? displayAmount(amounts.token0Amount) : null,
@@ -147,7 +169,7 @@ export async function enrichPositionFinancials(options: Options): Promise<Financ
       currentValueUsd: value0 !== null && value1 !== null ? value0 + value1 : null,
       initialValueUsd: null,
       pnlUsd: null,
-      rewardSymbol: rewardMeta?.symbol ?? null,
+      rewardSymbol: reward ? rewardDisplaySymbol(position.chainId, reward.token, rewardMeta?.symbol) : null,
       rewardAmount: rewardAmountNumber === null ? null : displayAmount(rewardAmountNumber),
       rewardValueUsd: rewardAmountNumber !== null && rewardPrice !== undefined ? rewardAmountNumber * rewardPrice : null,
     };

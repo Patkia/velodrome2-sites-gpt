@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { filterPositions, isPositionsResponse, type PositionsResponse } from "../lib/shared/positions-schema.ts";
+import {
+  CELO_VELO_REWARD_ADDRESS,
+  OPTIMISM_VELO_ADDRESS,
+  enrichPositionFinancials,
+} from "../lib/server/position-financials.ts";
 
 const payload: PositionsResponse = {
   schemaVersion: 1,
@@ -50,5 +55,46 @@ assert.doesNotMatch(pageSource, />CELO<|>USDC<|>ASTR<|>WETH</);
 assert.match(pageSource, /Initial Value/);
 assert.match(pageSource, /Unavailable/);
 assert.doesNotMatch(pageSource, /\$9,551|\$8,694|\+\$611|126\.55 VELO|Fixture snapshot/);
+
+const word = (value: bigint) => value.toString(16).padStart(64, "0");
+const rpcResult = (result: string) => Response.json({ jsonrpc: "2.0", id: 1, result });
+const addressWord = (address: string) => address.slice(2).toLowerCase().padStart(64, "0");
+const stringResult = (value: string) => {
+  const encoded = Buffer.from(value).toString("hex");
+  return `0x${word(BigInt(32))}${word(BigInt(Buffer.byteLength(value)))}${encoded.padEnd(64, "0")}`;
+};
+let priceRequestUrl = "";
+const financialFetch: typeof fetch = async (input, init) => {
+  const url = String(input);
+  if (url.startsWith("https://coins.llama.fi/")) {
+    priceRequestUrl = url;
+    return Response.json({
+      coins: {
+        [`optimism:${OPTIMISM_VELO_ADDRESS}`]: { price: 0.024 },
+      },
+    });
+  }
+  const body = JSON.parse(String(init?.body)) as { params: Array<{ data: string }> };
+  const data = body.params[0]?.data ?? "";
+  if (data.startsWith("0xf7c618c1")) return rpcResult(`0x${addressWord(CELO_VELO_REWARD_ADDRESS)}`);
+  if (data.startsWith("0x3e491d47")) return rpcResult(`0x${word(BigInt("440288000000000000000"))}`);
+  if (data === "0x95d89b41") return rpcResult(stringResult("XVELO"));
+  if (data === "0x313ce567") return rpcResult(`0x${word(BigInt(18))}`);
+  throw new Error(`Unexpected call: ${data}`);
+};
+const [celoFinancial] = await enrichPositionFinancials({
+  positions: [{
+    ...payload.positions[0],
+    gaugeAddress: "0xff5ec01b541cab692676ac3150d452b3c7fc404d",
+  }],
+  walletAddress: "0x0000000000000000000000000000000000000009",
+  rpcUrls: new Map([[42220, "https://forno.celo.org"]]),
+  fetchImpl: financialFetch,
+});
+assert.equal(celoFinancial.rewardSymbol, "VELO");
+assert.equal(celoFinancial.rewardAmount, "440.288");
+assert.equal(celoFinancial.rewardValueUsd, 10.566912);
+assert.match(priceRequestUrl, new RegExp(`celo:${CELO_VELO_REWARD_ADDRESS}`));
+assert.match(priceRequestUrl, new RegExp(`optimism:${OPTIMISM_VELO_ADDRESS}`));
 
 console.log("positions.test: PASS");
