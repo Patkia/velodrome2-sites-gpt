@@ -19,6 +19,9 @@ function live(inRange: boolean, overrides: Partial<PositionsResponse> = {}): Pos
       token1: "0x0000000000000000000000000000000000000004", token1Symbol: "USDC", token1Decimals: 6,
       tickLower: -50, tickUpper: 50, currentTick: inRange ? 0 : 100, inRange,
       status: inRange ? "in-range" : "out-of-range",
+      token0Amount: "0", token0ValueUsd: 0, token1Amount: "208.22", token1ValueUsd: 208.19,
+      currentValueUsd: 208.19, initialValueUsd: 207.47, pnlUsd: 0.72,
+      rewardSymbol: "VELO", rewardAmount: "202.68", rewardValueUsd: 4.9,
       positionManager: POSITION_MANAGER,
     } as never],
     chainCounts: { Optimism: 0, Celo: 1, Soneium: 0 },
@@ -75,6 +78,16 @@ assert.equal(first.notificationsSent, 1);
 assert.equal(first.notificationsSuppressed, 0);
 assert.equal(first.stateWrites, 1);
 assert.equal(sent.length, 1);
+assert.equal(sent[0], [
+  "Out of range: [CELO] CELO/USDC",
+  "Initial Value: ~$207.47",
+  "Current Value: ~$208.19",
+  "P/L: +$0.72 (+0.35%)",
+  "0.00 CELO (~$0.00)",
+  "208.22 USDC (~$208.19)",
+  "Reward 202.68 VELO (~$4.90)",
+].join("\n"));
+assert.doesNotMatch(sent[0], /Position|Tick|Source/);
 
 const repeated = await readMonitorStateful({
   readLive: (async () => live(false)) as never,
@@ -193,8 +206,9 @@ assert.equal(manual.notificationsSent, 1);
 assert.equal(manualStore.existsCalls, 0);
 assert.equal(manualStore.writeCalls, 0);
 assert.equal(manualStore.deleteCalls, 0);
-assert.match(manualMessages[0], /Velodrome2 Sites test notification/);
-assert.doesNotMatch(manualMessages[0], /Out of range/);
+assert.equal(manualMessages.length, 1);
+assert.match(manualMessages[0], /^TEST PREVIEW/);
+assert.match(manualMessages[0], /Out of range: \[CELO\] CELO\/USDC/);
 
 let missingStateSends = 0;
 const missingState = await readMonitorStateful({

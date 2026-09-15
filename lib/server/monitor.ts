@@ -35,6 +35,18 @@ type MonitorPosition = {
   tickLower: number;
   tickUpper: number;
   inRange: boolean;
+  token0Symbol: string;
+  token1Symbol: string;
+  token0Amount: string | null;
+  token1Amount: string | null;
+  token0ValueUsd: number | null;
+  token1ValueUsd: number | null;
+  currentValueUsd: number | null;
+  initialValueUsd: number | null;
+  pnlUsd: number | null;
+  rewardSymbol: string | null;
+  rewardAmount: string | null;
+  rewardValueUsd: number | null;
 };
 
 function shortAddress(value: string): string {
@@ -42,7 +54,7 @@ function shortAddress(value: string): string {
 }
 
 function pairLabel(position: DashboardPosition): string {
-  return `${position.token0Symbol ?? shortAddress(position.token0)} / ${position.token1Symbol ?? shortAddress(position.token1)}`;
+  return `${position.token0Symbol ?? shortAddress(position.token0)}/${position.token1Symbol ?? shortAddress(position.token1)}`;
 }
 
 function sanitizePosition(position: DashboardPosition): MonitorPosition {
@@ -55,16 +67,51 @@ function sanitizePosition(position: DashboardPosition): MonitorPosition {
     tickLower: position.tickLower,
     tickUpper: position.tickUpper,
     inRange: position.inRange,
+    token0Symbol: position.token0Symbol ?? shortAddress(position.token0),
+    token1Symbol: position.token1Symbol ?? shortAddress(position.token1),
+    token0Amount: position.token0Amount ?? null,
+    token1Amount: position.token1Amount ?? null,
+    token0ValueUsd: position.token0ValueUsd ?? null,
+    token1ValueUsd: position.token1ValueUsd ?? null,
+    currentValueUsd: position.currentValueUsd ?? null,
+    initialValueUsd: position.initialValueUsd ?? null,
+    pnlUsd: position.pnlUsd ?? null,
+    rewardSymbol: position.rewardSymbol ?? null,
+    rewardAmount: position.rewardAmount ?? null,
+    rewardValueUsd: position.rewardValueUsd ?? null,
   };
 }
 
-function outOfRangeMessage(position: MonitorPosition): string {
-  return [
+function usd(value: number | null): string {
+  return value === null || !Number.isFinite(value) ? "Unavailable" : `~$${value.toFixed(2)}`;
+}
+
+function amount(value: string | null): string {
+  if (value === null) return "Unavailable";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "Unavailable";
+}
+
+function outOfRangeMessage(position: MonitorPosition, test = false): string {
+  const pnlPercent = position.pnlUsd !== null && position.initialValueUsd !== null && position.initialValueUsd !== 0
+    ? position.pnlUsd / position.initialValueUsd * 100
+    : null;
+  const pnl = position.pnlUsd === null || pnlPercent === null
+    ? "Unavailable"
+    : `${position.pnlUsd >= 0 ? "+" : "-"}$${Math.abs(position.pnlUsd).toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%)`;
+  const lines = [
+    ...(test ? ["TEST PREVIEW — notification state unchanged"] : []),
     `Out of range: [${position.chain.toUpperCase()}] ${position.pair}`,
-    `Position #${position.positionId}`,
-    `Tick: ${position.currentTick} (${position.tickLower} → ${position.tickUpper})`,
-    "Source: ChatGPT Sites stateful monitor",
-  ].join("\n");
+    `Initial Value: ${usd(position.initialValueUsd)}`,
+    `Current Value: ${usd(position.currentValueUsd)}`,
+    `P/L: ${pnl}`,
+    `${amount(position.token0Amount)} ${position.token0Symbol} (${usd(position.token0ValueUsd)})`,
+    `${amount(position.token1Amount)} ${position.token1Symbol} (${usd(position.token1ValueUsd)})`,
+  ];
+  if (position.rewardAmount !== null && position.rewardSymbol !== null) {
+    lines.push(`Reward ${amount(position.rewardAmount)} ${position.rewardSymbol} (${usd(position.rewardValueUsd)})`);
+  }
+  return lines.join("\n");
 }
 
 function positionStateKey(position: InternalPosition): string | null {
@@ -86,8 +133,6 @@ function hasIncompleteBlockchainCoverage(live: PositionsResponse): boolean {
 function stateErrorCode(error: unknown): string {
   return error instanceof StateStoreError ? error.code : "STATE_BACKEND_FAILED";
 }
-
-const TEST_MESSAGE = "Velodrome2 Sites test notification\nSource: ChatGPT Sites manual test";
 
 async function readLive(options: MonitorOptions): Promise<PositionsResponse> {
   const reader = options.readLive ?? readLivePositions;
@@ -125,7 +170,11 @@ export async function readMonitorStateful(options: MonitorOptions) {
 
   if (options.testNotification) {
     notificationsAttempted = 1;
-    const result = await sender(TEST_MESSAGE, tgOptions);
+    const previewPosition = outOfRangePositions[0] ?? positions[0];
+    const message = previewPosition
+      ? outOfRangeMessage(previewPosition, true)
+      : "TEST PREVIEW — notification state unchanged\nNo current positions available";
+    const result = await sender(message, tgOptions);
     if (result.sent) notificationsSent = 1;
     else if (result.errorCode) warnings.push(result.errorCode);
     return {

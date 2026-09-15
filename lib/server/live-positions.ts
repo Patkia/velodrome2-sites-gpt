@@ -91,9 +91,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       tickUpper: position.tickUpper,
       currentTick: position.currentTick,
       inRange: position.inRange,
-      positionManager: options.includeStateIdentity
-        ? OPTIMISM_POSITION_MANAGERS[position.version]
-        : undefined,
+      positionManager: OPTIMISM_POSITION_MANAGERS[position.version],
       gaugeAddress: position.gaugeAddress,
     })));
   } else {
@@ -118,7 +116,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
         tickUpper: position.tickUpper,
         currentTick: position.currentTick,
         inRange: position.inRange,
-        positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
+        positionManager: MULTICHAIN_POSITION_MANAGER,
         gaugeAddress: position.gaugeContractAddress,
       })));
     }
@@ -174,7 +172,10 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
     warnings.push("POSITION_FINANCIALS_UNAVAILABLE");
   }
 
-  enrichedPositions = enrichedPositions.map(({ gaugeAddress: _gaugeAddress, ...position }) => position);
+  enrichedPositions = enrichedPositions.map(({ gaugeAddress: _gaugeAddress, positionManager, ...position }) => ({
+    ...position,
+    ...(options.includeStateIdentity && positionManager ? { positionManager } : {}),
+  }));
 
   const uniqueUnavailable = [...new Set(unavailableChains)];
   const uniqueWarnings = [...new Set(warnings)];

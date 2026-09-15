@@ -7,7 +7,7 @@ const PRICE_NAMESPACES: Record<number, string> = { 10: "optimism", 42220: "celo"
 export const CELO_VELO_REWARD_ADDRESS = "0x7f9adfbd38b669f03d1d11000bc76b9aaea28a81";
 export const OPTIMISM_VELO_ADDRESS = "0x9560e827af36c94d2ac33a39bce1fe78631088db";
 
-type FinancialPosition = DashboardPosition & { gaugeAddress?: string };
+type FinancialPosition = DashboardPosition & { gaugeAddress?: string; positionManager?: string };
 type Options = {
   positions: FinancialPosition[];
   walletAddress?: string;
@@ -43,6 +43,76 @@ async function ethCall(fetchImpl: typeof fetch, rpcUrl: string, to: string, data
   const payload = await response.json() as { result?: unknown; error?: unknown };
   if (payload.error || typeof payload.result !== "string") throw new Error("RPC_UNAVAILABLE");
   return payload.result;
+}
+
+async function rpcRequest(fetchImpl: typeof fetch, rpcUrl: string, method: string, params: unknown[]): Promise<unknown> {
+  const response = await fetchImpl(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  if (!response.ok) throw new Error("RPC_UNAVAILABLE");
+  const payload = await response.json() as { result?: unknown; error?: unknown };
+  if (payload.error || payload.result === undefined) throw new Error("RPC_UNAVAILABLE");
+  return payload.result;
+}
+
+function word(value: string, index: number): bigint {
+  const body = value.replace(/^0x/, "");
+  const part = body.slice(index * 64, (index + 1) * 64);
+  if (!/^[0-9a-fA-F]{64}$/.test(part)) throw new Error("INVALID_LOG_DATA");
+  return BigInt(`0x${part}`);
+}
+
+async function readHistoricalPrices(fetchImpl: typeof fetch, timestamp: number, keys: string[]) {
+  const response = await fetchImpl(`https://coins.llama.fi/prices/historical/${timestamp}/${keys.join(",")}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error("HISTORICAL_PRICE_UNAVAILABLE");
+  const payload = await response.json() as { coins?: Record<string, { price?: unknown }> };
+  return keys.map((key) => {
+    const price = payload.coins?.[key]?.price;
+    return typeof price === "number" && Number.isFinite(price) ? price : null;
+  });
+}
+
+async function readInitialValueUsd(fetchImpl: typeof fetch, rpcUrl: string, position: FinancialPosition): Promise<number | null> {
+  if (!position.positionManager || position.token0Decimals === null || position.token1Decimals === null) return null;
+  const tokenIdTopic = `0x${BigInt(position.positionId).toString(16).padStart(64, "0")}`;
+  const result = await rpcRequest(fetchImpl, rpcUrl, "eth_getLogs", [{
+    address: position.positionManager,
+    fromBlock: "0x0",
+    toBlock: "latest",
+    topics: [null, tokenIdTopic],
+  }]);
+  if (!Array.isArray(result)) return null;
+  const mintLog = result
+    .filter((item): item is { data: string; blockNumber: string } => Boolean(
+      item && typeof item === "object"
+      && typeof (item as { data?: unknown }).data === "string"
+      && /^0x[0-9a-fA-F]{192}$/.test((item as { data: string }).data)
+      && typeof (item as { blockNumber?: unknown }).blockNumber === "string",
+    ))
+    .sort((a, b) => Number(BigInt(a.blockNumber) - BigInt(b.blockNumber)))[0];
+  if (!mintLog) return null;
+  const block = await rpcRequest(fetchImpl, rpcUrl, "eth_getBlockByNumber", [mintLog.blockNumber, false]);
+  if (!block || typeof block !== "object" || typeof (block as { timestamp?: unknown }).timestamp !== "string") return null;
+  const namespace = PRICE_NAMESPACES[position.chainId];
+  if (!namespace) return null;
+  const keys = [
+    `${namespace}:${position.token0.toLowerCase()}`,
+    `${namespace}:${position.token1.toLowerCase()}`,
+  ];
+  const [price0, price1] = await readHistoricalPrices(
+    fetchImpl,
+    Number(BigInt((block as { timestamp: string }).timestamp)),
+    keys,
+  );
+  if (price0 === null || price1 === null) return null;
+  const amount0 = Number(word(mintLog.data, 1)) / Math.pow(10, position.token0Decimals);
+  const amount1 = Number(word(mintLog.data, 2)) / Math.pow(10, position.token1Decimals);
+  const value = amount0 * price0 + amount1 * price1;
+  return Number.isFinite(value) ? value : null;
 }
 
 function tokenAmounts(position: FinancialPosition): { token0Amount: number; token1Amount: number } | null {
@@ -142,6 +212,18 @@ export async function enrichPositionFinancials(options: Options): Promise<Financ
   ]).concat(rewardPriceTokens);
   const prices = await readPrices(fetchImpl, priceTokens).catch(() => new Map<string, number>());
 
+  const initialValues = new Map<string, number>();
+  await Promise.all(options.positions.map(async (position) => {
+    const rpcUrl = options.rpcUrls.get(position.chainId);
+    if (!rpcUrl) return;
+    try {
+      const value = await readInitialValueUsd(fetchImpl, rpcUrl, position);
+      if (value !== null) initialValues.set(`${position.chainId}:${position.positionManager}:${position.positionId}`, value);
+    } catch {
+      // Historical RPC and price coverage are best-effort and read-only.
+    }
+  }));
+
   return options.positions.map((position) => {
     const amounts = tokenAmounts(position);
     const namespace = PRICE_NAMESPACES[position.chainId];
@@ -160,15 +242,17 @@ export async function enrichPositionFinancials(options: Options): Promise<Financ
           ? prices.get(`optimism:${OPTIMISM_VELO_ADDRESS}`)
           : undefined)
       : undefined;
+    const currentValueUsd = value0 !== null && value1 !== null ? value0 + value1 : null;
+    const initialValueUsd = initialValues.get(`${position.chainId}:${position.positionManager}:${position.positionId}`) ?? null;
     return {
       ...position,
       token0Amount: amounts ? displayAmount(amounts.token0Amount) : null,
       token0ValueUsd: value0,
       token1Amount: amounts ? displayAmount(amounts.token1Amount) : null,
       token1ValueUsd: value1,
-      currentValueUsd: value0 !== null && value1 !== null ? value0 + value1 : null,
-      initialValueUsd: null,
-      pnlUsd: null,
+      currentValueUsd,
+      initialValueUsd,
+      pnlUsd: currentValueUsd !== null && initialValueUsd !== null ? currentValueUsd - initialValueUsd : null,
       rewardSymbol: reward ? rewardDisplaySymbol(position.chainId, reward.token, rewardMeta?.symbol) : null,
       rewardAmount: rewardAmountNumber === null ? null : displayAmount(rewardAmountNumber),
       rewardValueUsd: rewardAmountNumber !== null && rewardPrice !== undefined ? rewardAmountNumber * rewardPrice : null,
