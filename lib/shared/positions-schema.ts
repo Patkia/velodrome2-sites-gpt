@@ -17,6 +17,16 @@ export interface DashboardPosition {
   currentTick: number;
   inRange: boolean;
   status: PositionStatus;
+  token0Amount?: string | null;
+  token0ValueUsd?: number | null;
+  token1Amount?: string | null;
+  token1ValueUsd?: number | null;
+  currentValueUsd?: number | null;
+  initialValueUsd?: number | null;
+  pnlUsd?: number | null;
+  rewardSymbol?: string | null;
+  rewardAmount?: string | null;
+  rewardValueUsd?: number | null;
 }
 
 export interface PositionsResponse {
@@ -73,5 +83,15 @@ export function isPositionsResponse(value: unknown): value is PositionsResponse 
       && typeof position.currentTick === "number"
       && typeof position.inRange === "boolean"
       && (position.status === "in-range" || position.status === "out-of-range")
+      && (position.token0Amount === undefined || typeof position.token0Amount === "string" || position.token0Amount === null)
+      && (position.token0ValueUsd === undefined || typeof position.token0ValueUsd === "number" || position.token0ValueUsd === null)
+      && (position.token1Amount === undefined || typeof position.token1Amount === "string" || position.token1Amount === null)
+      && (position.token1ValueUsd === undefined || typeof position.token1ValueUsd === "number" || position.token1ValueUsd === null)
+      && (position.currentValueUsd === undefined || typeof position.currentValueUsd === "number" || position.currentValueUsd === null)
+      && (position.initialValueUsd === undefined || typeof position.initialValueUsd === "number" || position.initialValueUsd === null)
+      && (position.pnlUsd === undefined || typeof position.pnlUsd === "number" || position.pnlUsd === null)
+      && (position.rewardSymbol === undefined || typeof position.rewardSymbol === "string" || position.rewardSymbol === null)
+      && (position.rewardAmount === undefined || typeof position.rewardAmount === "string" || position.rewardAmount === null)
+      && (position.rewardValueUsd === undefined || typeof position.rewardValueUsd === "number" || position.rewardValueUsd === null)
     ));
 }

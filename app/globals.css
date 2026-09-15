@@ -38,14 +38,21 @@ select { min-width: 150px; padding: 9px 10px; color: #f1f5ff; border: 1px solid 
 .status-badge { white-space: nowrap; height: 30px; padding: 0 11px; }
 .status-in-range { color: #92f6c6; background: #123d33; }
 .status-out-of-range { color: #ffc1c1; background: #532837; }
-.token-list { display: grid; gap: 8px; margin: 20px 0; }
-.token-row { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 8px; border-bottom: 1px solid #293859; }
-.token-row dt { text-transform: none; letter-spacing: normal; font-size: .88rem; }
-.token-row dd, .value-grid dd { margin: 0; font-weight: 700; text-align: right; }
-.value-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: auto 0 18px; }
+.value-grid dd { margin: 0; font-weight: 700; text-align: right; }
+.value-grid { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 10px; margin: 22px 0 14px; }
 .value-grid > div { padding: 11px; border-radius: 9px; background: #121e38; }
+.value-grid .current-value { border: 1px solid #315d8d; background: linear-gradient(145deg, #162b4b, #121e38); }
 .value-grid dt { font-size: .68rem; letter-spacing: .04em; }
 .value-grid dd { margin-top: 5px; font-size: .94rem; }
+.asset-list { display: grid; gap: 0; margin: 0; border: 1px solid #293859; border-radius: 10px; overflow: hidden; }
+.asset-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; background: rgb(18 30 56 / 62%); }
+.asset-row + .asset-row { border-top: 1px solid #293859; }
+.asset-row dt { display: grid; gap: 3px; text-transform: none; letter-spacing: normal; }
+.asset-row dt strong { color: #e9efff; font-size: .9rem; }
+.asset-row dt span { color: #7888aa; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem; }
+.asset-row dd { margin: 0; color: #f4f7ff; font-size: .9rem; font-weight: 750; text-align: right; }
+.asset-row dd span { color: #9dadd0; font-weight: 600; }
+.reward-row { background: rgb(30 49 79 / 72%); }
 .positive { color: #8df5c3; }
 .negative { color: #ffabb0; }
 .card-updated { padding-top: 13px; border-top: 1px solid #293859; font-weight: 500; text-transform: none; letter-spacing: normal; }
@@ -62,4 +69,5 @@ select { min-width: 150px; padding: 9px 10px; color: #f1f5ff; border: 1px solid 
   .summary-metrics { justify-content: flex-start; }
   .filter-label select { width: 100%; }
   .position-grid { grid-template-columns: 1fr; }
+  .value-grid { grid-template-columns: 1fr; }
 }

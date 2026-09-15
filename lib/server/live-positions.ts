@@ -5,6 +5,7 @@ import {
   readMultichainPositionsDiagnostics,
 } from "./multichain-positions.ts";
 import { readTokenMetadata } from "./token-metadata.ts";
+import { enrichPositionFinancials } from "./position-financials.ts";
 import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
 
 type OptimismReader = typeof readOptimismPositions;
@@ -23,6 +24,7 @@ type Options = {
 
 type InternalDashboardPosition = DashboardPosition & {
   positionManager?: string;
+  gaugeAddress?: string;
 };
 
 function normalizePosition(position: {
@@ -38,11 +40,13 @@ function normalizePosition(position: {
   currentTick: number;
   inRange: boolean;
   positionManager?: string;
+  gaugeAddress?: string;
 }): InternalDashboardPosition {
-  const { positionManager, ...publicPosition } = position;
+  const { positionManager, gaugeAddress, ...publicPosition } = position;
   return {
     ...publicPosition,
     ...(positionManager ? { positionManager } : {}),
+    ...(gaugeAddress ? { gaugeAddress } : {}),
     token0Symbol: null,
     token0Decimals: null,
     token1Symbol: null,
@@ -90,6 +94,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       positionManager: options.includeStateIdentity
         ? OPTIMISM_POSITION_MANAGERS[position.version]
         : undefined,
+      gaugeAddress: position.gaugeAddress,
     })));
   } else {
     unavailableChains.push("Optimism");
@@ -114,6 +119,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
         currentTick: position.currentTick,
         inRange: position.inRange,
         positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
+        gaugeAddress: position.gaugeContractAddress,
       })));
     }
   } else {
@@ -156,6 +162,19 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       warnings.push("TOKEN_METADATA_UNAVAILABLE");
     }
   }
+
+  try {
+    enrichedPositions = await enrichPositionFinancials({
+      positions: enrichedPositions,
+      walletAddress: options.walletAddress,
+      rpcUrls,
+      fetchImpl: options.fetchImpl,
+    });
+  } catch {
+    warnings.push("POSITION_FINANCIALS_UNAVAILABLE");
+  }
+
+  enrichedPositions = enrichedPositions.map(({ gaugeAddress: _gaugeAddress, ...position }) => position);
 
   const uniqueUnavailable = [...new Set(unavailableChains)];
   const uniqueWarnings = [...new Set(warnings)];

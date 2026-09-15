@@ -56,6 +56,7 @@ type Position = {
   chainId: number;
   gaugeIndex: number;
   gaugeAddress: string;
+  gaugeContractAddress: string;
   positionId: string;
   liquidity: string;
   token0: string;
@@ -211,6 +212,7 @@ async function hydratePosition(
     chainId: config.chainId,
     gaugeIndex,
     gaugeAddress: maskAddress(gaugeAddress),
+    gaugeContractAddress: gaugeAddress,
     positionId: positionId.toString(),
     liquidity,
     token0,

@@ -26,6 +26,19 @@ function tokenLabel(symbol: string | null, address: string): string {
   return symbol ?? shortAddress(address);
 }
 
+function formatUsd(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "Unavailable";
+  return `~${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+function tokenAmount(value: string | null | undefined): string {
+  if (!value) return "Unavailable";
+  const numeric = Number(value);
+  return Number.isFinite(numeric)
+    ? new Intl.NumberFormat("en-US", { maximumFractionDigits: numeric >= 1 ? 4 : 8 }).format(numeric)
+    : value;
+}
+
 export default function Home() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [selectedChain, setSelectedChain] = useState("all");
@@ -141,16 +154,26 @@ export default function Home() {
                   </span>
                 </div>
 
-                <dl className="token-list">
-                  <div className="token-row"><dt>{position.token0Symbol ?? "Token 0"}</dt><dd>{shortAddress(position.token0)}</dd></div>
-                  <div className="token-row"><dt>{position.token1Symbol ?? "Token 1"}</dt><dd>{shortAddress(position.token1)}</dd></div>
+                <dl className="value-grid">
+                  <div className="current-value"><dt>Current Value</dt><dd>{formatUsd(position.currentValueUsd)}</dd></div>
+                  <div><dt>Initial Value</dt><dd>{formatUsd(position.initialValueUsd)}</dd></div>
+                  <div><dt>P/L</dt><dd>{formatUsd(position.pnlUsd)}</dd></div>
                 </dl>
 
-                <dl className="value-grid">
-                  <div><dt>Liquidity</dt><dd>{position.liquidity}</dd></div>
-                  <div><dt>Current tick</dt><dd>{position.currentTick}</dd></div>
-                  <div><dt>Tick range</dt><dd>{position.tickLower} → {position.tickUpper}</dd></div>
-                  <div><dt>Value / P&amp;L</dt><dd>—</dd></div>
+                <dl className="asset-list">
+                  {[
+                    { label: position.token0Symbol ?? "Token 0", address: position.token0, amount: position.token0Amount, value: position.token0ValueUsd },
+                    { label: position.token1Symbol ?? "Token 1", address: position.token1, amount: position.token1Amount, value: position.token1ValueUsd },
+                  ].map((token) => (
+                    <div className="asset-row" key={token.address}>
+                      <dt><strong>{token.label}</strong><span>{shortAddress(token.address)}</span></dt>
+                      <dd>{tokenAmount(token.amount)} <span>({formatUsd(token.value)})</span></dd>
+                    </div>
+                  ))}
+                  <div className="asset-row reward-row">
+                    <dt><strong>Reward {position.rewardSymbol ?? ""}</strong><span>Earned</span></dt>
+                    <dd>{tokenAmount(position.rewardAmount)} <span>({formatUsd(position.rewardValueUsd)})</span></dd>
+                  </div>
                 </dl>
               </article>
             ))}

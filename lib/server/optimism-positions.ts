@@ -65,6 +65,7 @@ type Position = {
   currentTick: number;
   tickUpper: number;
   inRange: boolean;
+  gaugeAddress?: string;
 };
 
 class PositionsError extends Error {
@@ -83,6 +84,7 @@ type PositionCandidate = {
   version: "V1" | "V2";
   positionManager: string;
   factory: string;
+  gaugeAddress?: string;
 };
 
 type PositionReadDiagnostics = {
@@ -164,6 +166,7 @@ async function readPositionCandidate(
     currentTick,
     tickUpper,
     inRange: currentTick >= tickLower && currentTick <= tickUpper,
+    ...(candidate.gaugeAddress ? { gaugeAddress: candidate.gaugeAddress } : {}),
   };
 }
 
@@ -211,6 +214,7 @@ export async function readOptimismPositions(options: ReaderOptions) {
           version: positionVersion(gauge.positionManager),
           positionManager: gauge.positionManager,
           factory: gauge.factory,
+          gaugeAddress: gauge.address,
         };
       } catch {
         warnings.add("STAKED_ENUMERATION_PARTIAL");
