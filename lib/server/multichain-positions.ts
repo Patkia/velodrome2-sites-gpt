@@ -49,13 +49,15 @@ const RPC_METHODS = new Set(["eth_chainId", "eth_call"]);
 type RpcMethod = "eth_chainId" | "eth_call";
 type FetchImpl = typeof fetch;
 type RpcReader = (method: RpcMethod, params: unknown[]) => Promise<string>;
-type Options = { walletAddress?: string; fetchImpl?: FetchImpl };
+type Options = { walletAddress?: string; fetchImpl?: FetchImpl; includeFinancialIdentity?: boolean };
 
 type Position = {
   chain: "Celo" | "Soneium";
   chainId: number;
   gaugeIndex: number;
   gaugeAddress: string;
+  gaugeAddressRaw?: string;
+  sqrtPriceX96?: string;
   positionId: string;
   liquidity: string;
   token0: string;
@@ -177,6 +179,7 @@ async function hydratePosition(
   gaugeAddress: string,
   walletAddress: string,
   index: number,
+  includeFinancialIdentity = false,
 ): Promise<Position> {
   const tokenIdHex = await ethCall(
     rpc,
@@ -204,6 +207,7 @@ async function hydratePosition(
 
   const slot0Hex = await ethCall(rpc, poolAddress, `0x${SELECTOR.slot0}`);
   const slot0Words = splitWords(slot0Hex, 2);
+  const sqrtPriceX96 = decodeUint(`0x${slot0Words[0]}`).toString();
   const currentTick = decodeInt24(slot0Words[1]);
 
   return {
@@ -211,6 +215,7 @@ async function hydratePosition(
     chainId: config.chainId,
     gaugeIndex,
     gaugeAddress: maskAddress(gaugeAddress),
+    ...(includeFinancialIdentity ? { gaugeAddressRaw: gaugeAddress, sqrtPriceX96 } : {}),
     positionId: positionId.toString(),
     liquidity,
     token0,
@@ -226,6 +231,7 @@ async function readChain(
   config: (typeof CHAINS)[number],
   walletAddress: string,
   fetchImpl: FetchImpl,
+  includeFinancialIdentity = false,
 ): Promise<ChainResult> {
   const rpc = createRpc(config.rpcUrl, fetchImpl);
   try {
@@ -266,7 +272,15 @@ async function readChain(
 
     for (let index = 0; index < count; index++) {
       try {
-        positions.push(await hydratePosition(rpc, config, gaugeIndex, gaugeAddress, walletAddress, index));
+        positions.push(await hydratePosition(
+          rpc,
+          config,
+          gaugeIndex,
+          gaugeAddress,
+          walletAddress,
+          index,
+          includeFinancialIdentity,
+        ));
       } catch {
         positionReadFailed = true;
         unavailablePositionIds.push(`${config.chain}:${gaugeIndex}:${index}`);
@@ -293,7 +307,9 @@ export async function readMultichainPositionsDiagnostics(options: Options) {
   const walletAddress = validateWallet(options.walletAddress);
   const fetchImpl = options.fetchImpl ?? fetch;
   const chains: ChainResult[] = [];
-  for (const config of CHAINS) chains.push(await readChain(config, walletAddress, fetchImpl));
+  for (const config of CHAINS) {
+    chains.push(await readChain(config, walletAddress, fetchImpl, options.includeFinancialIdentity === true));
+  }
   return {
     schemaVersion: 1,
     status: "ok" as const,

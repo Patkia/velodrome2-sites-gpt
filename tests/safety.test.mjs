@@ -15,6 +15,7 @@ const multichainPositionsRouteSource = fs.readFileSync("app/api/diagnostics/mult
 const multichainPositionsSource = fs.readFileSync("lib/server/multichain-positions.ts", "utf8");
 const livePositionsSource = fs.readFileSync("lib/server/live-positions.ts", "utf8");
 const tokenMetadataSource = fs.readFileSync("lib/server/token-metadata.ts", "utf8");
+const financialEnrichmentSource = fs.readFileSync("lib/server/financial-enrichment.ts", "utf8");
 const monitorRouteSource = fs.readFileSync("app/api/cron/monitor/route.ts", "utf8");
 const monitorSource = fs.readFileSync("lib/server/monitor.ts", "utf8");
 const telegramSource = fs.readFileSync("lib/server/telegram.ts", "utf8");
@@ -39,7 +40,10 @@ assert.match(pageSource, /status: "loading"/);
 assert.match(pageSource, /status: "error"/);
 assert.match(pageSource, /filterPositions/);
 
-const serverSource = `${routeSource}\n${sharedSource}\n${livePositionsSource}`;
+const serverSource = `${routeSource}
+${sharedSource}
+${livePositionsSource}
+${financialEnrichmentSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "TransactionService", "WalletService", "PRIVATE_KEY",
   "TELEGRAM_", "UPSTASH_", "Cron", "cloudflare:workers", "file_put_contents",
@@ -135,7 +139,7 @@ assert.match(upstashStateSource, /\["DEL"/);
 assert.doesNotMatch(upstashStateSource, /console\.(log|error|warn|info)|vercel\.app|github/i);
 assert.doesNotMatch(`${monitorSource}\n${telegramSource}\n${upstashStateSource}`, /writeFile|appendFile|file_put_contents|eth_sendTransaction|eth_sendRawTransaction|personal_sign|eth_sign/);
 
-const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\n${livePositionsSource}\n${tokenMetadataSource}`;
+const optimismServerSource = `${optimismRouteSource}\n${optimismClientSource}\n${optimismPositionsRouteSource}\n${optimismPositionsSource}\n${optimismDiagnosticsRouteSource}\n${multichainDiagnosticsRouteSource}\n${multichainDiagnosticsSource}\n${multichainPositionsRouteSource}\n${multichainPositionsSource}\n${routeSource}\\n${livePositionsSource}\\n${tokenMetadataSource}\\n${financialEnrichmentSource}`;
 for (const forbidden of [
   "eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign",
   "TransactionService", "WalletService", "PRIVATE_KEY", "TELEGRAM_", "UPSTASH_",

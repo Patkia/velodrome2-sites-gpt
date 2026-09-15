@@ -12,6 +12,17 @@ export interface DashboardPosition {
   token1: string;
   token1Symbol: string | null;
   token1Decimals: number | null;
+  token0Amount: number | null;
+  token0ValueUsd: number | null;
+  token1Amount: number | null;
+  token1ValueUsd: number | null;
+  currentValueUsd: number | null;
+  initialValueUsd: number | null;
+  profitLossUsd: number | null;
+  profitLossPercent: number | null;
+  rewardSymbol: string | null;
+  rewardAmount: number | null;
+  rewardValueUsd: number | null;
   tickLower: number;
   tickUpper: number;
   currentTick: number;
@@ -68,6 +79,17 @@ export function isPositionsResponse(value: unknown): value is PositionsResponse 
       && typeof position.token1 === "string"
       && (typeof position.token1Symbol === "string" || position.token1Symbol === null)
       && (typeof position.token1Decimals === "number" || position.token1Decimals === null)
+      && (typeof position.token0Amount === "number" || position.token0Amount === null)
+      && (typeof position.token0ValueUsd === "number" || position.token0ValueUsd === null)
+      && (typeof position.token1Amount === "number" || position.token1Amount === null)
+      && (typeof position.token1ValueUsd === "number" || position.token1ValueUsd === null)
+      && (typeof position.currentValueUsd === "number" || position.currentValueUsd === null)
+      && (typeof position.initialValueUsd === "number" || position.initialValueUsd === null)
+      && (typeof position.profitLossUsd === "number" || position.profitLossUsd === null)
+      && (typeof position.profitLossPercent === "number" || position.profitLossPercent === null)
+      && (typeof position.rewardSymbol === "string" || position.rewardSymbol === null)
+      && (typeof position.rewardAmount === "number" || position.rewardAmount === null)
+      && (typeof position.rewardValueUsd === "number" || position.rewardValueUsd === null)
       && typeof position.tickLower === "number"
       && typeof position.tickUpper === "number"
       && typeof position.currentTick === "number"

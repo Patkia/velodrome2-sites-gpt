@@ -48,6 +48,7 @@ type ReaderOptions = {
   rpcUrl?: string;
   walletAddress?: string;
   fetchImpl?: typeof fetch;
+  includeFinancialIdentity?: boolean;
 };
 
 type RpcErrorPayload = { code?: unknown };
@@ -56,6 +57,8 @@ type Position = {
   positionId: string;
   source: "staked" | "unstaked";
   version: "V1" | "V2";
+  gaugeAddressRaw?: string;
+  sqrtPriceX96?: string;
   liquidity: string;
   token0: string;
   token1: string;
@@ -81,6 +84,7 @@ type PositionCandidate = {
   positionId: bigint;
   source: "staked" | "unstaked";
   version: "V1" | "V2";
+  gaugeAddressRaw?: string;
   positionManager: string;
   factory: string;
 };
@@ -119,6 +123,7 @@ async function readPositionCandidate(
   rpc: RpcReader,
   candidate: PositionCandidate,
   diagnostics?: PositionReadDiagnostics,
+  includeFinancialIdentity = false,
 ): Promise<Position | null> {
   const positionHex = await ethCall(
     rpc,
@@ -149,12 +154,14 @@ async function readPositionCandidate(
 
   const slot0Hex = await ethCall(rpc, poolAddress, `0x${SELECTOR.slot0}`);
   const slot0Words = splitWords(slot0Hex, 2);
+  const sqrtPriceX96 = decodeUintWord(slot0Words[0]).toString();
   const currentTick = decodeInt24(slot0Words[1]);
 
   return {
     positionId: candidate.positionId.toString(),
     source: candidate.source,
     version: candidate.version,
+    ...(includeFinancialIdentity ? { gaugeAddressRaw: candidate.gaugeAddressRaw, sqrtPriceX96 } : {}),
     liquidity: liquidityValue.toString(),
     token0,
     token1,
@@ -209,6 +216,7 @@ export async function readOptimismPositions(options: ReaderOptions) {
           positionId,
           source: "staked",
           version: positionVersion(gauge.positionManager),
+          gaugeAddressRaw: gauge.address,
           positionManager: gauge.positionManager,
           factory: gauge.factory,
         };
@@ -274,7 +282,12 @@ export async function readOptimismPositions(options: ReaderOptions) {
     MAX_RPC_CONCURRENCY,
     async (candidate): Promise<Position | null> => {
       try {
-        return await readPositionCandidate(rpc, candidate, diagnostics);
+        return await readPositionCandidate(
+          rpc,
+          candidate,
+          diagnostics,
+          options.includeFinancialIdentity === true,
+        );
       } catch {
         unavailablePositionIds.add(`${candidate.version}:${candidate.positionId.toString()}`);
         warnings.add("POSITION_READ_PARTIAL");

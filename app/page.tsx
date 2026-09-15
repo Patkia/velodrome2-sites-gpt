@@ -15,7 +15,7 @@ type LoadState =
 function formatObservedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Updated time unavailable";
-  return `Updated · ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date)}`;
+  return `Updated Â· ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date)}`;
 }
 
 function shortAddress(value: string): string {
@@ -24,6 +24,18 @@ function shortAddress(value: string): string {
 
 function tokenLabel(symbol: string | null, address: string): string {
   return symbol ?? shortAddress(address);
+}
+
+function formatUsd(value: number | null): string {
+  return value === null || !Number.isFinite(value)
+    ? "Unavailable"
+    : `~$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatAmount(value: number | null): string {
+  return value === null || !Number.isFinite(value)
+    ? "Unavailable"
+    : value.toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
 
 export default function Home() {
@@ -77,7 +89,7 @@ export default function Home() {
 
       {loadState.status === "loading" && (
         <section className="notice-card" aria-live="polite">
-          <span className="loading-dot" aria-hidden="true" /> Loading position data…
+          <span className="loading-dot" aria-hidden="true" /> Loading position dataâ€¦
         </section>
       )}
 
@@ -91,7 +103,7 @@ export default function Home() {
         <>
           {data.status === "partial" && (
             <section className="notice-card error-card" role="status">
-              Some chains could not be read. Showing available live positions only.
+              Some live data is temporarily unavailable. Showing everything currently available.
             </section>
           )}
 
@@ -132,25 +144,54 @@ export default function Home() {
               <article className="position-card" data-status={position.status} key={`${position.chain}-${position.positionId}`}>
                 <div className="card-heading">
                   <div>
-                    <p className="chain-name">{position.chain} · Chain {position.chainId}</p>
+                    <p className="chain-name">{position.chain} Â· Chain {position.chainId}</p>
                     <h2 className="pair-name">{tokenLabel(position.token0Symbol, position.token0)} / {tokenLabel(position.token1Symbol, position.token1)}</h2>
-                    <p className="position-id">Position #{position.positionId} · {position.source}</p>
+                    <p className="position-id">Position #{position.positionId} Â· {position.source}</p>
                   </div>
                   <span className={`status-badge ${position.inRange ? "status-in-range" : "status-out-of-range"}`}>
-                    ● {position.inRange ? "In Range" : "Out of Range"}
+                    â— {position.inRange ? "In Range" : "Out of Range"}
                   </span>
                 </div>
 
-                <dl className="token-list">
-                  <div className="token-row"><dt>{position.token0Symbol ?? "Token 0"}</dt><dd>{shortAddress(position.token0)}</dd></div>
-                  <div className="token-row"><dt>{position.token1Symbol ?? "Token 1"}</dt><dd>{shortAddress(position.token1)}</dd></div>
-                </dl>
+                <section className="financial-summary" aria-label="Position value">
+                  <div className="current-value-block">
+                    <span>Current Value</span>
+                    <strong>{formatUsd(position.currentValueUsd)}</strong>
+                  </div>
+                  <div className="financial-meta">
+                    <div><span>Initial Value</span><strong>{formatUsd(position.initialValueUsd)}</strong></div>
+                    <div><span>P/L</span><strong>{position.profitLossUsd === null ? "Unavailable" : formatUsd(position.profitLossUsd)}</strong></div>
+                  </div>
+                </section>
 
-                <dl className="value-grid">
-                  <div><dt>Liquidity</dt><dd>{position.liquidity}</dd></div>
-                  <div><dt>Current tick</dt><dd>{position.currentTick}</dd></div>
-                  <div><dt>Tick range</dt><dd>{position.tickLower} → {position.tickUpper}</dd></div>
-                  <div><dt>Value / P&amp;L</dt><dd>—</dd></div>
+                <dl className="token-list">
+                  <div className="token-row">
+                    <dt>
+                      <strong>{position.token0Symbol ?? "Token 0"}</strong>
+                      <small>{shortAddress(position.token0)}</small>
+                    </dt>
+                    <dd>
+                      <strong>{formatAmount(position.token0Amount)} {position.token0Symbol ?? ""}</strong>
+                      <small>{formatUsd(position.token0ValueUsd)}</small>
+                    </dd>
+                  </div>
+                  <div className="token-row">
+                    <dt>
+                      <strong>{position.token1Symbol ?? "Token 1"}</strong>
+                      <small>{shortAddress(position.token1)}</small>
+                    </dt>
+                    <dd>
+                      <strong>{formatAmount(position.token1Amount)} {position.token1Symbol ?? ""}</strong>
+                      <small>{formatUsd(position.token1ValueUsd)}</small>
+                    </dd>
+                  </div>
+                  <div className="token-row reward-row">
+                    <dt><strong>Reward{position.rewardSymbol ? ` Â· ${position.rewardSymbol}` : ""}</strong></dt>
+                    <dd>
+                      <strong>{formatAmount(position.rewardAmount)} {position.rewardSymbol ?? ""}</strong>
+                      <small>{formatUsd(position.rewardValueUsd)}</small>
+                    </dd>
+                  </div>
                 </dl>
               </article>
             ))}

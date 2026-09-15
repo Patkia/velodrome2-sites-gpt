@@ -38,10 +38,20 @@ select { min-width: 150px; padding: 9px 10px; color: #f1f5ff; border: 1px solid 
 .status-badge { white-space: nowrap; height: 30px; padding: 0 11px; }
 .status-in-range { color: #92f6c6; background: #123d33; }
 .status-out-of-range { color: #ffc1c1; background: #532837; }
-.token-list { display: grid; gap: 8px; margin: 20px 0; }
+.financial-summary { display: grid; gap: 12px; margin: 20px 0 12px; }
+.current-value-block { padding: 16px; border-radius: 11px; background: #121e38; }
+.current-value-block span, .financial-meta span { display: block; color: #9fb0d0; font-size: .72rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.current-value-block strong { display: block; margin-top: 6px; font-size: 1.45rem; }
+.financial-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.financial-meta > div { padding: 12px; border-radius: 9px; background: #121e38; }
+.financial-meta strong { display: block; margin-top: 5px; font-size: .94rem; }
+.token-list { display: grid; gap: 8px; margin: 8px 0 2px; }
 .token-row { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 8px; border-bottom: 1px solid #293859; }
 .token-row dt { text-transform: none; letter-spacing: normal; font-size: .88rem; }
+.token-row dt, .token-row dd { display: grid; gap: 3px; }
+.token-row small { color: #8fa0c1; font-size: .72rem; font-weight: 500; }
 .token-row dd, .value-grid dd { margin: 0; font-weight: 700; text-align: right; }
+.reward-row { margin-top: 3px; padding-top: 8px; border-top: 1px solid #334263; }
 .value-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: auto 0 18px; }
 .value-grid > div { padding: 11px; border-radius: 9px; background: #121e38; }
 .value-grid dt { font-size: .68rem; letter-spacing: .04em; }

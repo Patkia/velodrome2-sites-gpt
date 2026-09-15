@@ -5,11 +5,13 @@ import {
   readMultichainPositionsDiagnostics,
 } from "./multichain-positions.ts";
 import { readTokenMetadata } from "./token-metadata.ts";
+import { readFinancialData } from "./financial-enrichment.ts";
 import type { DashboardPosition, PositionsResponse } from "../shared/positions-schema.ts";
 
 type OptimismReader = typeof readOptimismPositions;
 type MultichainReader = typeof readMultichainPositionsDiagnostics;
 type MetadataReader = typeof readTokenMetadata;
+type FinancialReader = typeof readFinancialData;
 
 type Options = {
   optimismRpcUrl?: string;
@@ -18,11 +20,15 @@ type Options = {
   readOptimism?: OptimismReader;
   readMultichain?: MultichainReader;
   readMetadata?: MetadataReader;
+  readFinancial?: FinancialReader;
   includeStateIdentity?: boolean;
+  includeFinancialData?: boolean;
 };
 
 type InternalDashboardPosition = DashboardPosition & {
   positionManager?: string;
+  gaugeAddressRaw?: string;
+  sqrtPriceX96?: string;
 };
 
 function normalizePosition(position: {
@@ -38,15 +44,30 @@ function normalizePosition(position: {
   currentTick: number;
   inRange: boolean;
   positionManager?: string;
+  gaugeAddressRaw?: string;
+  sqrtPriceX96?: string;
 }): InternalDashboardPosition {
-  const { positionManager, ...publicPosition } = position;
+  const { positionManager, gaugeAddressRaw, sqrtPriceX96, ...publicPosition } = position;
   return {
     ...publicPosition,
     ...(positionManager ? { positionManager } : {}),
+    ...(gaugeAddressRaw ? { gaugeAddressRaw } : {}),
+    ...(sqrtPriceX96 ? { sqrtPriceX96 } : {}),
     token0Symbol: null,
     token0Decimals: null,
     token1Symbol: null,
     token1Decimals: null,
+    token0Amount: null,
+    token0ValueUsd: null,
+    token1Amount: null,
+    token1ValueUsd: null,
+    currentValueUsd: null,
+    initialValueUsd: null,
+    profitLossUsd: null,
+    profitLossPercent: null,
+    rewardSymbol: null,
+    rewardAmount: null,
+    rewardValueUsd: null,
     status: position.inRange ? "in-range" : "out-of-range",
   };
 }
@@ -55,6 +76,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
   const optimismReader = options.readOptimism ?? readOptimismPositions;
   const multichainReader = options.readMultichain ?? readMultichainPositionsDiagnostics;
   const metadataReader = options.readMetadata ?? readTokenMetadata;
+  const financialReader = options.readFinancial ?? readFinancialData;
   const unavailableChains: string[] = [];
   const warnings: string[] = [];
   const positions: InternalDashboardPosition[] = [];
@@ -65,10 +87,12 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       rpcUrl: options.optimismRpcUrl,
       walletAddress: options.walletAddress,
       fetchImpl: options.fetchImpl,
+      includeFinancialIdentity: options.includeFinancialData === true,
     }),
     multichainReader({
       walletAddress: options.walletAddress,
       fetchImpl: options.fetchImpl,
+      includeFinancialIdentity: options.includeFinancialData === true,
     }),
   ]);
 
@@ -87,6 +111,8 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       tickUpper: position.tickUpper,
       currentTick: position.currentTick,
       inRange: position.inRange,
+      gaugeAddressRaw: options.includeFinancialData ? position.gaugeAddressRaw : undefined,
+      sqrtPriceX96: options.includeFinancialData ? position.sqrtPriceX96 : undefined,
       positionManager: options.includeStateIdentity
         ? OPTIMISM_POSITION_MANAGERS[position.version]
         : undefined,
@@ -113,7 +139,9 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
         tickUpper: position.tickUpper,
         currentTick: position.currentTick,
         inRange: position.inRange,
-        positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
+      gaugeAddressRaw: options.includeFinancialData ? position.gaugeAddressRaw : undefined,
+      sqrtPriceX96: options.includeFinancialData ? position.sqrtPriceX96 : undefined,
+      positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
       })));
     }
   } else {
@@ -155,6 +183,30 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
     } catch {
       warnings.push("TOKEN_METADATA_UNAVAILABLE");
     }
+  }
+
+  if (options.includeFinancialData && enrichedPositions.length > 0) {
+    const financialResults = await Promise.all(enrichedPositions.map(async (position) => {
+      try {
+        const result = await financialReader({
+          position,
+          rpcUrl: rpcUrls.get(position.chainId),
+          walletAddress: options.walletAddress,
+          fetchImpl: options.fetchImpl,
+        });
+        return { position, result };
+      } catch {
+        return { position, result: null };
+      }
+    }));
+
+    enrichedPositions = financialResults.map(({ position, result }) => {
+      if (result) warnings.push(...result.warnings);
+      const { gaugeAddressRaw: _gaugeAddressRaw, sqrtPriceX96: _sqrtPriceX96, ...publicPosition } = position;
+      void _gaugeAddressRaw;
+      void _sqrtPriceX96;
+      return result ? { ...publicPosition, ...result.data } : publicPosition;
+    });
   }
 
   const uniqueUnavailable = [...new Set(unavailableChains)];
