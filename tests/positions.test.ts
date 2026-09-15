@@ -54,6 +54,7 @@ assert.match(pageSource, /tokenLabel\(position\.token1Symbol, position\.token1\)
 assert.doesNotMatch(pageSource, />CELO<|>USDC<|>ASTR<|>WETH</);
 assert.match(pageSource, /Initial Value/);
 assert.match(pageSource, /Unavailable/);
+assert.doesNotMatch(pageSource, />POC</);
 assert.doesNotMatch(pageSource, /\$9,551|\$8,694|\+\$611|126\.55 VELO|Fixture snapshot/);
 
 const word = (value: bigint) => value.toString(16).padStart(64, "0");
