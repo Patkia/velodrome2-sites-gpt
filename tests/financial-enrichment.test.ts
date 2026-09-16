@@ -3,7 +3,8 @@ import { readFinancialData } from "../lib/server/financial-enrichment.ts";
 
 const TOKEN0 = "0x0000000000000000000000000000000000000001";
 const TOKEN1 = "0x0000000000000000000000000000000000000002";
-const REWARD = "0x0000000000000000000000000000000000000003";
+const REWARD = "0x7f9adfbd38b669f03d1d11000bc76b9aaea28a81";
+const OPTIMISM_VELO = "0x9560e827af36c94d2ac33a39bce1fe78631088db";
 const GAUGE = "0x0000000000000000000000000000000000000004";
 const WALLET = "0x0000000000000000000000000000000000000005";
 const RPC = "https://rpc.example.test";
@@ -33,7 +34,7 @@ const fetchImpl: typeof fetch = (async (input: RequestInfo | URL, init?: Request
     for (const coin of path.split(",")) {
       if (coin.endsWith(TOKEN0)) coins[coin] = { price: 2 };
       if (coin.endsWith(TOKEN1)) coins[coin] = { price: 1 };
-      if (coin.endsWith(REWARD)) coins[coin] = { price: 0.025 };
+      if (coin.endsWith(OPTIMISM_VELO)) coins[coin] = { price: 0.025 };
     }
     return Response.json({ coins });
   }
@@ -45,7 +46,7 @@ const fetchImpl: typeof fetch = (async (input: RequestInfo | URL, init?: Request
 
   // Reward token metadata calls use the reward token as `to`.
   if (call.to.toLowerCase() === REWARD.toLowerCase() && call.data === "0x95d89b41") {
-    return Response.json({ jsonrpc: "2.0", id: 1, result: dynamicString("VELO") });
+    return Response.json({ jsonrpc: "2.0", id: 1, result: dynamicString("XVELO") });
   }
   if (call.to.toLowerCase() === REWARD.toLowerCase() && call.data === "0x313ce567") {
     return Response.json({ jsonrpc: "2.0", id: 1, result: uintWord(BigInt(18)) });

@@ -14,8 +14,7 @@ h1, h2, p { margin: 0; }
 h1 { font-size: clamp(1.8rem, 4vw, 2.7rem); letter-spacing: -0.04em; }
 .eyebrow, .section-label, .chain-name, .position-id, dt, .updated, .card-updated { color: #a7b4d3; font-size: .78rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .subtitle { max-width: 650px; margin-top: 10px; color: #c5cee6; line-height: 1.6; }
-.poc-badge, .status-badge { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-size: .78rem; font-weight: 800; letter-spacing: .06em; }
-.poc-badge { min-width: 48px; padding: 8px 10px; color: #c9f4ff; background: #17465d; }
+.status-badge { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-size: .78rem; font-weight: 800; letter-spacing: .06em; }
 .notice-card { display: flex; align-items: center; gap: 10px; padding: 24px 30px; border-top: 0; color: #c5cee6; }
 .error-card { color: #ffc1c1; }
 .loading-dot { width: 10px; height: 10px; border-radius: 50%; background: #80a9ff; box-shadow: 0 0 0 5px rgb(128 169 255 / 13%); animation: pulse 1.2s ease-in-out infinite; }

@@ -114,6 +114,38 @@ const withStateIdentity = await readLivePositions({
 });
 assert.equal((withStateIdentity.positions[0] as typeof withStateIdentity.positions[0] & { positionManager?: string }).positionManager?.toLowerCase(), "0x991d5546c4b442b4c5fdc4c8b8b8d131deb24702");
 
+let financialPositionManager: string | undefined;
+const withFinancialData = await readLivePositions({
+  walletAddress: "0x1111111111111111111111111111111111111111",
+  optimismRpcUrl: "https://example.invalid",
+  readOptimism: optimismEmpty as never,
+  readMultichain: multichainTwo as never,
+  readMetadata: tokenMetadata as never,
+  readFinancial: (async ({ position }: { position: { positionManager?: string } }) => {
+    financialPositionManager = position.positionManager;
+    return {
+      data: {
+        token0Amount: null,
+        token0ValueUsd: null,
+        token1Amount: null,
+        token1ValueUsd: null,
+        currentValueUsd: 393.25,
+        initialValueUsd: 395.06,
+        profitLossUsd: -1.81,
+        profitLossPercent: -0.46,
+        rewardSymbol: null,
+        rewardAmount: null,
+        rewardValueUsd: null,
+      },
+      warnings: [],
+    };
+  }) as never,
+  includeFinancialData: true,
+});
+assert.equal(financialPositionManager?.toLowerCase(), "0x991d5546c4b442b4c5fdc4c8b8b8d131deb24702");
+assert.equal(withFinancialData.positions[0]?.initialValueUsd, 395.06);
+assert.equal("positionManager" in withFinancialData.positions[0]!, false);
+
 const metadataPartial = await readLivePositions({
   walletAddress: "0x1111111111111111111111111111111111111111",
   optimismRpcUrl: "https://example.invalid",

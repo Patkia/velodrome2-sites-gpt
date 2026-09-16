@@ -3,6 +3,14 @@ import { readTokenMetadata } from "./token-metadata.ts";
 const EARNED_SELECTOR = "3e491d47";
 const REWARD_TOKEN_SELECTOR = "f7c618c1";
 const OPTIMISM_VELO = "0x9560e827af36c94d2ac33a39bce1fe78631088db";
+const INCREASE_LIQUIDITY_EVENT_TOPIC = "0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const HISTORY_URLS: Record<number, string> = {
+  10: "https://optimism.blockscout.com",
+  42220: "https://celo.blockscout.com",
+  1868: "https://soneium.blockscout.com",
+};
+const CELO_VELO = "0x7f9adfbd38b669f03d1d11000bc76b9aaea28a81";
 
 export type FinancialInputPosition = {
   chain: string;
@@ -19,6 +27,7 @@ export type FinancialInputPosition = {
   tickUpper: number;
   sqrtPriceX96?: string;
   gaugeAddressRaw?: string;
+  positionManager?: string;
 };
 
 export type FinancialData = {
@@ -27,9 +36,9 @@ export type FinancialData = {
   token1Amount: number | null;
   token1ValueUsd: number | null;
   currentValueUsd: number | null;
-  initialValueUsd: null;
-  profitLossUsd: null;
-  profitLossPercent: null;
+  initialValueUsd: number | null;
+  profitLossUsd: number | null;
+  profitLossPercent: number | null;
   rewardSymbol: string | null;
   rewardAmount: number | null;
   rewardValueUsd: number | null;
@@ -95,6 +104,81 @@ async function getPrices(chain: string, addresses: string[], fetchImpl: typeof f
   }
 }
 
+async function rpcCall(rpcUrl: string, method: string, params: unknown[], fetchImpl: typeof fetch): Promise<unknown> {
+  const response = await fetchImpl(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  if (!response.ok) throw new Error("RPC_UNAVAILABLE");
+  const payload = await response.json() as { result?: unknown };
+  return payload.result;
+}
+
+async function getHistoricalPrices(chain: string, timestamp: number, addresses: string[], fetchImpl: typeof fetch): Promise<Map<string, number>> {
+  const unique = [...new Set(addresses.map((address) => address.toLowerCase()))];
+  const coins = unique.map((address) => `${chain}:${address}`).join(",");
+  try {
+    const response = await fetchImpl(`https://coins.llama.fi/prices/historical/${timestamp}/${coins}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return new Map();
+    const payload = await response.json() as { coins?: Record<string, { price?: unknown }> };
+    const result = new Map<string, number>();
+    for (const address of unique) {
+      const price = payload.coins?.[`${chain}:${address}`]?.price;
+      if (typeof price === "number" && Number.isFinite(price) && price > 0) result.set(address, price);
+    }
+    return result;
+  } catch {
+    return new Map();
+  }
+}
+
+async function readInitialValue(position: FinancialInputPosition, rpcUrl: string, fetchImpl: typeof fetch): Promise<number | null> {
+  if (!position.positionManager || position.token0Decimals === null || position.token1Decimals === null) return null;
+  const historyUrl = HISTORY_URLS[position.chainId];
+  if (!historyUrl) return null;
+  try {
+    const transferResponse = await fetchImpl(`${historyUrl}/api/v2/tokens/${position.positionManager}/instances/${position.positionId}/transfers`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!transferResponse.ok) return null;
+    const transferPayload = await transferResponse.json() as { items?: Array<{ from?: { hash?: unknown }; transaction_hash?: unknown }> };
+    const mint = transferPayload.items?.find((item) => String(item.from?.hash ?? "").toLowerCase() === ZERO_ADDRESS && typeof item.transaction_hash === "string");
+    if (!mint || typeof mint.transaction_hash !== "string") return null;
+
+    const receipt = await rpcCall(rpcUrl, "eth_getTransactionReceipt", [mint.transaction_hash], fetchImpl) as { blockNumber?: unknown; logs?: unknown } | null;
+    if (!receipt || typeof receipt.blockNumber !== "string" || !Array.isArray(receipt.logs)) return null;
+    const tokenIdTopic = `0x${BigInt(position.positionId).toString(16).padStart(64, "0")}`.toLowerCase();
+    let amount0: bigint | null = null;
+    let amount1: bigint | null = null;
+    for (const entry of receipt.logs as Array<{ address?: unknown; topics?: unknown; data?: unknown }>) {
+      const topics = Array.isArray(entry.topics) ? entry.topics : [];
+      if (String(entry.address ?? "").toLowerCase() !== position.positionManager.toLowerCase()) continue;
+      if (String(topics[0] ?? "").toLowerCase() !== INCREASE_LIQUIDITY_EVENT_TOPIC) continue;
+      if (String(topics[1] ?? "").toLowerCase() !== tokenIdTopic) continue;
+      const data = String(entry.data ?? "").replace(/^0x/, "");
+      if (data.length !== 192) return null;
+      amount0 = BigInt(`0x${data.slice(64, 128)}`);
+      amount1 = BigInt(`0x${data.slice(128, 192)}`);
+      break;
+    }
+    if (amount0 === null || amount1 === null) return null;
+
+    const block = await rpcCall(rpcUrl, "eth_getBlockByNumber", [receipt.blockNumber, false], fetchImpl) as { timestamp?: unknown } | null;
+    if (!block || typeof block.timestamp !== "string") return null;
+    const timestamp = Number(BigInt(block.timestamp));
+    const prices = await getHistoricalPrices(priceChain(position.chain), timestamp, [position.token0, position.token1], fetchImpl);
+    const price0 = prices.get(position.token0.toLowerCase());
+    const price1 = prices.get(position.token1.toLowerCase());
+    if (price0 === undefined || price1 === undefined) return null;
+    const value = Number(amount0) / 10 ** position.token0Decimals * price0
+      + Number(amount1) / 10 ** position.token1Decimals * price1;
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function calculateAmounts(position: FinancialInputPosition): { token0: number; token1: number } | null {
   if (!position.sqrtPriceX96 || position.token0Decimals === null || position.token1Decimals === null) return null;
   const liquidity = Number(position.liquidity);
@@ -142,6 +226,14 @@ export async function readFinancialData(options: Options): Promise<{ data: Finan
     warnings.push(`${position.chain.toUpperCase()}_AMOUNTS_UNAVAILABLE`);
   }
 
+  if (options.rpcUrl) {
+    base.initialValueUsd = await readInitialValue(position, options.rpcUrl, fetchImpl);
+    if (base.initialValueUsd !== null && base.currentValueUsd !== null) {
+      base.profitLossUsd = base.currentValueUsd - base.initialValueUsd;
+      base.profitLossPercent = base.initialValueUsd > 0 ? base.profitLossUsd / base.initialValueUsd * 100 : null;
+    }
+  }
+
   if (options.rpcUrl && options.walletAddress && position.gaugeAddressRaw && /^0x[0-9a-fA-F]{40}$/.test(options.walletAddress)) {
     try {
       const rewardToken = decodeAddress(await ethCall(options.rpcUrl, position.gaugeAddressRaw, `0x${REWARD_TOKEN_SELECTOR}`, fetchImpl));
@@ -157,11 +249,12 @@ export async function readFinancialData(options: Options): Promise<{ data: Finan
         fetchImpl,
       ));
       if (rewardMeta?.decimals !== null && rewardMeta?.decimals !== undefined) {
-        base.rewardSymbol = rewardMeta.symbol;
+        const isCeloVelo = rewardToken === CELO_VELO;
+        base.rewardSymbol = isCeloVelo ? "VELO" : rewardMeta.symbol;
         base.rewardAmount = Number(earned) / 10 ** rewardMeta.decimals;
         let rewardPrices = await getPrices(priceChain(position.chain), [rewardToken], fetchImpl);
         let rewardPrice = rewardPrices.get(rewardToken);
-        if (rewardPrice === undefined && rewardMeta.symbol === "VELO") {
+        if (rewardPrice === undefined && (rewardMeta.symbol === "VELO" || isCeloVelo)) {
           rewardPrices = await getPrices("optimism", [OPTIMISM_VELO], fetchImpl);
           rewardPrice = rewardPrices.get(OPTIMISM_VELO);
         }

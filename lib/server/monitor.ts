@@ -31,10 +31,20 @@ type MonitorPosition = {
   chainId: number;
   positionId: string;
   pair: string;
-  currentTick: number;
-  tickLower: number;
-  tickUpper: number;
   inRange: boolean;
+  initialValueUsd: number | null;
+  currentValueUsd: number | null;
+  profitLossUsd: number | null;
+  profitLossPercent: number | null;
+  token0Symbol: string | null;
+  token0Amount: number | null;
+  token0ValueUsd: number | null;
+  token1Symbol: string | null;
+  token1Amount: number | null;
+  token1ValueUsd: number | null;
+  rewardSymbol: string | null;
+  rewardAmount: number | null;
+  rewardValueUsd: number | null;
 };
 
 function shortAddress(value: string): string {
@@ -42,7 +52,7 @@ function shortAddress(value: string): string {
 }
 
 function pairLabel(position: DashboardPosition): string {
-  return `${position.token0Symbol ?? shortAddress(position.token0)} / ${position.token1Symbol ?? shortAddress(position.token1)}`;
+  return `${position.token0Symbol ?? shortAddress(position.token0)}/${position.token1Symbol ?? shortAddress(position.token1)}`;
 }
 
 function sanitizePosition(position: DashboardPosition): MonitorPosition {
@@ -51,19 +61,70 @@ function sanitizePosition(position: DashboardPosition): MonitorPosition {
     chainId: position.chainId,
     positionId: position.positionId,
     pair: pairLabel(position),
-    currentTick: position.currentTick,
-    tickLower: position.tickLower,
-    tickUpper: position.tickUpper,
     inRange: position.inRange,
+    initialValueUsd: position.initialValueUsd,
+    currentValueUsd: position.currentValueUsd,
+    profitLossUsd: position.profitLossUsd,
+    profitLossPercent: position.profitLossPercent,
+    token0Symbol: position.token0Symbol,
+    token0Amount: position.token0Amount,
+    token0ValueUsd: position.token0ValueUsd,
+    token1Symbol: position.token1Symbol,
+    token1Amount: position.token1Amount,
+    token1ValueUsd: position.token1ValueUsd,
+    rewardSymbol: position.rewardSymbol,
+    rewardAmount: position.rewardAmount,
+    rewardValueUsd: position.rewardValueUsd,
   };
+}
+
+function usd(value: number | null | undefined): string {
+  return value == null ? "unavailable" : `~$${value.toFixed(2)}`;
+}
+
+function amount(value: number | null | undefined): string {
+  return value == null ? "unavailable" : value.toFixed(2);
+}
+
+function pnl(position: MonitorPosition): string {
+  if (position.profitLossUsd == null || position.profitLossPercent == null) return "unavailable";
+  const sign = position.profitLossUsd >= 0 ? "+" : "-";
+  const percentSign = position.profitLossPercent >= 0 ? "+" : "-";
+  return `${sign}$${Math.abs(position.profitLossUsd).toFixed(2)} (${percentSign}${Math.abs(position.profitLossPercent).toFixed(2)}%)`;
+}
+
+function tokenLine(symbol: string | null, tokenAmount: number | null, valueUsd: number | null): string {
+  return `${amount(tokenAmount)} ${symbol ?? "Token"} (${usd(valueUsd)})`;
+}
+
+function rewardLine(position: MonitorPosition): string {
+  if (position.rewardAmount == null) return "Reward unavailable";
+  return `Reward ${amount(position.rewardAmount)} ${position.rewardSymbol ?? "Token"} (${usd(position.rewardValueUsd)})`;
 }
 
 function outOfRangeMessage(position: MonitorPosition): string {
   return [
     `Out of range: [${position.chain.toUpperCase()}] ${position.pair}`,
-    `Position #${position.positionId}`,
-    `Tick: ${position.currentTick} (${position.tickLower} → ${position.tickUpper})`,
-    "Source: ChatGPT Sites stateful monitor",
+    `Initial Value: ${usd(position.initialValueUsd)}`,
+    `Current Value: ${usd(position.currentValueUsd)}`,
+    `P/L: ${pnl(position)}`,
+    tokenLine(position.token0Symbol, position.token0Amount, position.token0ValueUsd),
+    tokenLine(position.token1Symbol, position.token1Amount, position.token1ValueUsd),
+    rewardLine(position),
+  ].join("\n");
+}
+
+function testPreviewMessage(position: MonitorPosition | undefined): string {
+  if (!position) return "Velodrome2 Sites test notification\nNo active position available for preview";
+  return [
+    "TEST — Velodrome2 Sites alert preview",
+    `[${position.chain.toUpperCase()}] ${position.pair}`,
+    `Initial Value: ${usd(position.initialValueUsd)}`,
+    `Current Value: ${usd(position.currentValueUsd)}`,
+    `P/L: ${pnl(position)}`,
+    tokenLine(position.token0Symbol, position.token0Amount, position.token0ValueUsd),
+    tokenLine(position.token1Symbol, position.token1Amount, position.token1ValueUsd),
+    rewardLine(position),
   ].join("\n");
 }
 
@@ -87,8 +148,6 @@ function stateErrorCode(error: unknown): string {
   return error instanceof StateStoreError ? error.code : "STATE_BACKEND_FAILED";
 }
 
-const TEST_MESSAGE = "Velodrome2 Sites test notification\nSource: ChatGPT Sites manual test";
-
 async function readLive(options: MonitorOptions): Promise<PositionsResponse> {
   const reader = options.readLive ?? readLivePositions;
   return reader({
@@ -96,6 +155,7 @@ async function readLive(options: MonitorOptions): Promise<PositionsResponse> {
     walletAddress: options.walletAddress,
     fetchImpl: options.fetchImpl,
     includeStateIdentity: true,
+    includeFinancialData: true,
   });
 }
 
@@ -125,7 +185,7 @@ export async function readMonitorStateful(options: MonitorOptions) {
 
   if (options.testNotification) {
     notificationsAttempted = 1;
-    const result = await sender(TEST_MESSAGE, tgOptions);
+    const result = await sender(testPreviewMessage(positions[0]), tgOptions);
     if (result.sent) notificationsSent = 1;
     else if (result.errorCode) warnings.push(result.errorCode);
     return {

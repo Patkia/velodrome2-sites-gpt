@@ -84,7 +84,6 @@ export default function Home() {
           <h1>Velodrome Position Monitor</h1>
           <p className="subtitle">Read-only active liquidity positions across Optimism, Celo, and Soneium.</p>
         </div>
-        <span className="poc-badge">POC</span>
       </header>
 
       {loadState.status === "loading" && (

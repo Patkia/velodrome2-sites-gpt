@@ -113,7 +113,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
       inRange: position.inRange,
       gaugeAddressRaw: options.includeFinancialData ? position.gaugeAddressRaw : undefined,
       sqrtPriceX96: options.includeFinancialData ? position.sqrtPriceX96 : undefined,
-      positionManager: options.includeStateIdentity
+      positionManager: options.includeStateIdentity || options.includeFinancialData
         ? OPTIMISM_POSITION_MANAGERS[position.version]
         : undefined,
     })));
@@ -141,7 +141,7 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
         inRange: position.inRange,
       gaugeAddressRaw: options.includeFinancialData ? position.gaugeAddressRaw : undefined,
       sqrtPriceX96: options.includeFinancialData ? position.sqrtPriceX96 : undefined,
-      positionManager: options.includeStateIdentity ? MULTICHAIN_POSITION_MANAGER : undefined,
+      positionManager: options.includeStateIdentity || options.includeFinancialData ? MULTICHAIN_POSITION_MANAGER : undefined,
       })));
     }
   } else {
@@ -202,10 +202,16 @@ export async function readLivePositions(options: Options): Promise<PositionsResp
 
     enrichedPositions = financialResults.map(({ position, result }) => {
       if (result) warnings.push(...result.warnings);
-      const { gaugeAddressRaw: _gaugeAddressRaw, sqrtPriceX96: _sqrtPriceX96, ...publicPosition } = position;
+      const {
+        gaugeAddressRaw: _gaugeAddressRaw,
+        sqrtPriceX96: _sqrtPriceX96,
+        positionManager: _positionManager,
+        ...publicPosition
+      } = position;
       void _gaugeAddressRaw;
       void _sqrtPriceX96;
-      return result ? { ...publicPosition, ...result.data } : publicPosition;
+      const stateIdentity = options.includeStateIdentity && _positionManager ? { positionManager: _positionManager } : {};
+      return result ? { ...publicPosition, ...stateIdentity, ...result.data } : { ...publicPosition, ...stateIdentity };
     });
   }
 

@@ -17,6 +17,9 @@ function live(inRange: boolean, overrides: Partial<PositionsResponse> = {}): Pos
       chain: "Celo", chainId: 42220, positionId: "66532", source: "staked", liquidity: "200",
       token0: "0x0000000000000000000000000000000000000003", token0Symbol: "CELO", token0Decimals: 18,
       token1: "0x0000000000000000000000000000000000000004", token1Symbol: "USDC", token1Decimals: 6,
+      token0Amount: 0, token0ValueUsd: 0, token1Amount: 208.22, token1ValueUsd: 208.19,
+      currentValueUsd: 208.19, initialValueUsd: 207.47, profitLossUsd: 0.72, profitLossPercent: 0.35,
+      rewardSymbol: "VELO", rewardAmount: 202.68, rewardValueUsd: 4.9,
       tickLower: -50, tickUpper: 50, currentTick: inRange ? 0 : 100, inRange,
       status: inRange ? "in-range" : "out-of-range",
       positionManager: POSITION_MANAGER,
@@ -75,6 +78,13 @@ assert.equal(first.notificationsSent, 1);
 assert.equal(first.notificationsSuppressed, 0);
 assert.equal(first.stateWrites, 1);
 assert.equal(sent.length, 1);
+assert.match(sent[0], /Out of range: \[CELO\] CELO\/USDC/);
+assert.match(sent[0], /Initial Value: ~\$207\.47/);
+assert.match(sent[0], /Current Value: ~\$208\.19/);
+assert.match(sent[0], /P\/L: \+\$0\.72 \(\+0\.35%\)/);
+assert.match(sent[0], /0\.00 CELO \(~\$0\.00\)/);
+assert.match(sent[0], /208\.22 USDC \(~\$208\.19\)/);
+assert.match(sent[0], /Reward 202\.68 VELO \(~\$4\.90\)/);
 
 const repeated = await readMonitorStateful({
   readLive: (async () => live(false)) as never,
@@ -193,8 +203,14 @@ assert.equal(manual.notificationsSent, 1);
 assert.equal(manualStore.existsCalls, 0);
 assert.equal(manualStore.writeCalls, 0);
 assert.equal(manualStore.deleteCalls, 0);
-assert.match(manualMessages[0], /Velodrome2 Sites test notification/);
-assert.doesNotMatch(manualMessages[0], /Out of range/);
+assert.match(manualMessages[0], /TEST — Velodrome2 Sites alert preview/);
+assert.match(manualMessages[0], /Initial Value: ~\$207\.47/);
+assert.match(manualMessages[0], /Current Value: ~\$208\.19/);
+assert.match(manualMessages[0], /P\/L: \+\$0\.72 \(\+0\.35%\)/);
+assert.match(manualMessages[0], /0\.00 CELO \(~\$0\.00\)/);
+assert.match(manualMessages[0], /208\.22 USDC \(~\$208\.19\)/);
+assert.match(manualMessages[0], /Reward 202\.68 VELO \(~\$4\.90\)/);
+assert.doesNotMatch(manualMessages[0], /Out of range:/);
 
 let missingStateSends = 0;
 const missingState = await readMonitorStateful({
