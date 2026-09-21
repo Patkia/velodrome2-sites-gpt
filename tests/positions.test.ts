@@ -43,7 +43,7 @@ const routeSource = fs.readFileSync("app/api/positions/route.ts", "utf8");
 const pageSource = fs.readFileSync("app/page.tsx", "utf8");
 const schemaSource = fs.readFileSync("lib/shared/positions-schema.ts", "utf8");
 assert.doesNotMatch(routeSource, /POSITIONS_FIXTURE/);
-assert.doesNotMatch(schemaSource, /POSITIONS_FIXTURE|9551|8694|3926|VELO Â·|Fixture snapshot/);
+assert.doesNotMatch(schemaSource, /POSITIONS_FIXTURE|9551|8694|3926|VELO ·|Fixture snapshot/);
 assert.match(pageSource, /fetch\("\/api\/positions"/);
 assert.doesNotMatch(pageSource, /position\.liquidity/);
 assert.doesNotMatch(pageSource, /position\.currentTick/);

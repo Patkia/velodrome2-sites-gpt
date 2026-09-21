@@ -15,7 +15,7 @@ type LoadState =
 function formatObservedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Updated time unavailable";
-  return `Updated Â· ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date)}`;
+  return `Updated · ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date)}`;
 }
 
 function shortAddress(value: string): string {
@@ -88,7 +88,7 @@ export default function Home() {
 
       {loadState.status === "loading" && (
         <section className="notice-card" aria-live="polite">
-          <span className="loading-dot" aria-hidden="true" /> Loading position dataâ€¦
+          <span className="loading-dot" aria-hidden="true" /> Loading position data…
         </section>
       )}
 
@@ -143,12 +143,12 @@ export default function Home() {
               <article className="position-card" data-status={position.status} key={`${position.chain}-${position.positionId}`}>
                 <div className="card-heading">
                   <div>
-                    <p className="chain-name">{position.chain} Â· Chain {position.chainId}</p>
+                    <p className="chain-name">{position.chain} · Chain {position.chainId}</p>
                     <h2 className="pair-name">{tokenLabel(position.token0Symbol, position.token0)} / {tokenLabel(position.token1Symbol, position.token1)}</h2>
-                    <p className="position-id">Position #{position.positionId} Â· {position.source}</p>
+                    <p className="position-id">Position #{position.positionId} · {position.source}</p>
                   </div>
                   <span className={`status-badge ${position.inRange ? "status-in-range" : "status-out-of-range"}`}>
-                    â— {position.inRange ? "In Range" : "Out of Range"}
+                    ● {position.inRange ? "In Range" : "Out of Range"}
                   </span>
                 </div>
 
@@ -185,7 +185,7 @@ export default function Home() {
                     </dd>
                   </div>
                   <div className="token-row reward-row">
-                    <dt><strong>Reward{position.rewardSymbol ? ` Â· ${position.rewardSymbol}` : ""}</strong></dt>
+                    <dt><strong>Reward{position.rewardSymbol ? ` · ${position.rewardSymbol}` : ""}</strong></dt>
                     <dd>
                       <strong>{formatAmount(position.rewardAmount)} {position.rewardSymbol ?? ""}</strong>
                       <small>{formatUsd(position.rewardValueUsd)}</small>

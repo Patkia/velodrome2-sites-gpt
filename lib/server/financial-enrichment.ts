@@ -4,7 +4,11 @@ const EARNED_SELECTOR = "3e491d47";
 const REWARD_TOKEN_SELECTOR = "f7c618c1";
 const OPTIMISM_VELO = "0x9560e827af36c94d2ac33a39bce1fe78631088db";
 const INCREASE_LIQUIDITY_EVENT_TOPIC = "0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f";
+const TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ZERO_ADDRESS_TOPIC = `0x${"0".repeat(64)}`;
+const RECENT_MINT_LOOKBACK_BLOCKS = 5_000;
+const RECENT_MINT_LOOKBACK_WINDOWS = 4;
 const HISTORY_URLS: Record<number, string> = {
   10: "https://optimism.blockscout.com",
   42220: "https://celo.blockscout.com",
@@ -133,6 +137,60 @@ async function getHistoricalPrices(chain: string, timestamp: number, addresses: 
   }
 }
 
+function tokenIdTopic(positionId: string): string {
+  return `0x${BigInt(positionId).toString(16).padStart(64, "0")}`.toLowerCase();
+}
+
+function isMintReceipt(receipt: { logs?: unknown }, positionManager: string, positionId: string): boolean {
+  if (!Array.isArray(receipt.logs)) return false;
+  const expectedTokenId = tokenIdTopic(positionId);
+  return receipt.logs.some((entry) => {
+    const log = entry as { address?: unknown; topics?: unknown };
+    const topics = Array.isArray(log.topics) ? log.topics : [];
+    return String(log.address ?? "").toLowerCase() === positionManager.toLowerCase()
+      && String(topics[0] ?? "").toLowerCase() === TRANSFER_EVENT_TOPIC
+      && String(topics[1] ?? "").toLowerCase() === ZERO_ADDRESS_TOPIC
+      && String(topics[3] ?? "").toLowerCase() === expectedTokenId;
+  });
+}
+
+async function readRecentMintTransactionHash(
+  position: FinancialInputPosition,
+  rpcUrl: string,
+  fetchImpl: typeof fetch,
+): Promise<string | null> {
+  if (!position.positionManager) return null;
+  const head = await rpcCall(rpcUrl, "eth_blockNumber", [], fetchImpl);
+  if (typeof head !== "string" || !/^0x[0-9a-fA-F]+$/.test(head)) return null;
+  const latestBlock = Number(BigInt(head));
+  if (!Number.isSafeInteger(latestBlock)) return null;
+  const expectedTokenIdTopic = tokenIdTopic(position.positionId);
+
+  for (let window = 0; window < RECENT_MINT_LOOKBACK_WINDOWS; window++) {
+    const toBlock = latestBlock - (window * RECENT_MINT_LOOKBACK_BLOCKS);
+    if (toBlock < 0) break;
+    const fromBlock = Math.max(0, toBlock - RECENT_MINT_LOOKBACK_BLOCKS + 1);
+    const logs = await rpcCall(rpcUrl, "eth_getLogs", [{
+      address: position.positionManager,
+      fromBlock: `0x${fromBlock.toString(16)}`,
+      toBlock: `0x${toBlock.toString(16)}`,
+      topics: [INCREASE_LIQUIDITY_EVENT_TOPIC, expectedTokenIdTopic],
+    }], fetchImpl);
+    if (!Array.isArray(logs)) continue;
+
+    for (const entry of logs) {
+      const transactionHash = (entry as { transactionHash?: unknown }).transactionHash;
+      if (typeof transactionHash !== "string") continue;
+      const receipt = await rpcCall(rpcUrl, "eth_getTransactionReceipt", [transactionHash], fetchImpl) as { logs?: unknown } | null;
+      if (receipt && isMintReceipt(receipt, position.positionManager, position.positionId)) return transactionHash;
+    }
+
+    if (fromBlock === 0) break;
+  }
+
+  return null;
+}
+
 async function readInitialValue(position: FinancialInputPosition, rpcUrl: string, fetchImpl: typeof fetch): Promise<number | null> {
   if (!position.positionManager || position.token0Decimals === null || position.token1Decimals === null) return null;
   const historyUrl = HISTORY_URLS[position.chainId];
@@ -141,21 +199,25 @@ async function readInitialValue(position: FinancialInputPosition, rpcUrl: string
     const transferResponse = await fetchImpl(`${historyUrl}/api/v2/tokens/${position.positionManager}/instances/${position.positionId}/transfers`, {
       headers: { Accept: "application/json" },
     });
-    if (!transferResponse.ok) return null;
-    const transferPayload = await transferResponse.json() as { items?: Array<{ from?: { hash?: unknown }; transaction_hash?: unknown }> };
-    const mint = transferPayload.items?.find((item) => String(item.from?.hash ?? "").toLowerCase() === ZERO_ADDRESS && typeof item.transaction_hash === "string");
-    if (!mint || typeof mint.transaction_hash !== "string") return null;
+    const transferPayload = transferResponse.ok
+      ? await transferResponse.json() as { items?: Array<{ from?: { hash?: unknown }; transaction_hash?: unknown }> }
+      : undefined;
+    const mint = transferPayload?.items?.find((item) => String(item.from?.hash ?? "").toLowerCase() === ZERO_ADDRESS && typeof item.transaction_hash === "string");
+    const transactionHash = typeof mint?.transaction_hash === "string"
+      ? mint.transaction_hash
+      : await readRecentMintTransactionHash(position, rpcUrl, fetchImpl);
+    if (!transactionHash) return null;
 
-    const receipt = await rpcCall(rpcUrl, "eth_getTransactionReceipt", [mint.transaction_hash], fetchImpl) as { blockNumber?: unknown; logs?: unknown } | null;
+    const receipt = await rpcCall(rpcUrl, "eth_getTransactionReceipt", [transactionHash], fetchImpl) as { blockNumber?: unknown; logs?: unknown } | null;
     if (!receipt || typeof receipt.blockNumber !== "string" || !Array.isArray(receipt.logs)) return null;
-    const tokenIdTopic = `0x${BigInt(position.positionId).toString(16).padStart(64, "0")}`.toLowerCase();
+    const expectedTokenIdTopic = tokenIdTopic(position.positionId);
     let amount0: bigint | null = null;
     let amount1: bigint | null = null;
     for (const entry of receipt.logs as Array<{ address?: unknown; topics?: unknown; data?: unknown }>) {
       const topics = Array.isArray(entry.topics) ? entry.topics : [];
       if (String(entry.address ?? "").toLowerCase() !== position.positionManager.toLowerCase()) continue;
       if (String(topics[0] ?? "").toLowerCase() !== INCREASE_LIQUIDITY_EVENT_TOPIC) continue;
-      if (String(topics[1] ?? "").toLowerCase() !== tokenIdTopic) continue;
+      if (String(topics[1] ?? "").toLowerCase() !== expectedTokenIdTopic) continue;
       const data = String(entry.data ?? "").replace(/^0x/, "");
       if (data.length !== 192) return null;
       amount0 = BigInt(`0x${data.slice(64, 128)}`);
