@@ -11,6 +11,7 @@ coverage/
 .DS_Store
 *.pem
 .env*
+.serena/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
